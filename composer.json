@@ -1,0 +1,10 @@
+{
+    "name": "cerealconcept/cereal-images",
+    "description": "Génère des versions AVIF et WebP des images et les sert via .htaccess.",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "require": {
+        "php": ">=8.1",
+        "ext-gd": "*"
+    }
+}
