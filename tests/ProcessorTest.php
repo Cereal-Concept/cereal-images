@@ -10,6 +10,7 @@ use CerealImages\Optimizers\OptipngOptimizer;
 use CerealImages\Processor;
 use CerealImages\Tests\Doubles\FixedSizeEncoder;
 use CerealImages\Tests\Doubles\GrowingOptimizer;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 final class ProcessorTest extends TestCase
 {
@@ -188,6 +189,32 @@ final class ProcessorTest extends TestCase
         self::assertFileEquals($this->backupPath('2026/06/photo.jpg'), $original);
         self::assertFileDoesNotExist("{$scaled}.webp");
         self::assertArrayNotHasKey(Processor::META, Wp::$meta[1] ?? []);
+    }
+
+    /** @return list<array{int}> */
+    public static function encodedSizes(): array
+    {
+        return [[10], [10_000_000]];
+    }
+
+    #[DataProvider('encodedSizes')]
+    public function testAttachmentNamedLikeSidecarIsNeverTouched(int $encodedSize): void
+    {
+        $file = $this->jpeg('2026/06/photo.jpg');
+        $webp = "{$file}.webp";
+        file_put_contents($webp, 'pièce jointe WebP');
+        $this->attachment(1, $file);
+        $this->attachment(2, $webp);
+        $processor = new Processor([new FixedSizeEncoder('webp', $encodedSize)], []);
+
+        $report = $processor->processAttachment(1);
+
+        self::assertSame('collision', $report[0]['sidecars'][0]['status']);
+        self::assertSame('pièce jointe WebP', file_get_contents($webp));
+        self::assertSame([], $this->temporaryFiles());
+
+        $processor->restoreAttachment(1);
+        self::assertFileExists($webp);
     }
 
     public function testSummaryCountsServedFileWhenSidecarIsRejected(): void

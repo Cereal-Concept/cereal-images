@@ -175,10 +175,7 @@ final class Processor
         }
 
         foreach (Attachment::files($attachmentId) as $file) {
-            $removed = count(array_filter(
-                self::FORMATS,
-                static fn (string $format) => is_file("{$file}.{$format}") && unlink("{$file}.{$format}"),
-            ));
+            $removed = Sidecars::remove($file);
 
             $backup = Backup::path($file);
             $status = match (true) {
@@ -277,6 +274,11 @@ final class Processor
     {
         $destination = "{$file}.{$encoder->format()}";
         $tmp = "{$destination}.tmp";
+
+        // Une pièce jointe porte déjà ce nom (photo.jpg.webp) : ni écrasée, ni supprimée.
+        if (is_file($destination) && Attachment::isAttachmentFile($destination)) {
+            return ['status' => 'collision', 'served' => $servedSize, 'result' => 0, 'time' => 0.0];
+        }
 
         $start = hrtime(true);
         $encoded = $encoder->encode($source, $tmp);

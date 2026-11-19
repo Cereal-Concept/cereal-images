@@ -92,25 +92,32 @@ Pour tester (la préprod est derrière une authentification HTTP) :
 curl -sI -u "$AUTH" -H "Accept: image/avif,image/webp,*/*" "$URL" | grep -iE "^HTTP|content-type|content-length|vary"
 ```
 
-## État du code (v0.3.0)
+## État du code (v0.4.0)
 
 ```
-cereal-images.php          en-tête du plugin, autoload, enregistrement WP-CLI
+cereal-images.php          en-tête du plugin, autoload, activation/désactivation (bloc .htaccess), enregistrement WP-CLI
+uninstall.php              retire le bloc .htaccess, tous les sidecars (parcours des uploads) et la meta ; garde les sauvegardes
 src/Attachment.php         fichiers JPG/PNG d'une pièce jointe (principal + tailles), original non réduit, ID (SQL direct, %i : WP 6.2+)
 src/Files.php              Files::remove() (suppression sans erreur si absent)
-src/Hooks.php              wp_update_attachment_metadata → événement cron cereal_images_process (+60 s)
+src/Uploads.php            dossier et URL des uploads, chemin relatif
+src/Htaccess.php           bloc « Cereal Images » dans uploads/.htaccess (insert_with_markers), install/remove/isInstalled
+src/Sidecars.php           suppression des .avif/.webp d'une image ou de tous les uploads, jamais d'un fichier de pièce jointe
+src/Hooks.php              wp_update_attachment_metadata → événement cron cereal_images_process (+60 s) ; wp_delete_file → purge sidecars + sauvegarde
 src/Backup.php             sauvegarde dans cereal-images-backup/, reprise (déplacement) de la sauvegarde ShortPixel, restauration
 src/Shell.php              exec() + escapeshellarg, détection des binaires via command -v
 src/Processor.php          par fichier : sauvegarde → optimisation → sidecars (encodés depuis la sauvegarde, comparés au fichier servi) ; meta _cereal_images
 src/Encoders/Encoder.php   interface format()/isAvailable()/encode()
 src/Encoders/GdEncoder.php GD : AVIF q50 speed 8, WebP q80, PNG palette → truecolor, alpha conservé ; disponibilité testée par un vrai encodage 1×1
 src/Optimizers/            interface Optimizer, JpegoptimOptimizer (-m82, ICC conservé), OptipngOptimizer (-o2)
-src/Cli/Command.php        wp cereal-images convert [<id>...] [--all] [--skip-existing] [--avif-quality=50] [--webp-quality=80] [--avif-speed=8] [--lossless]
+src/Cli/Command.php        wp cereal-images htaccess [--remove]
+                           wp cereal-images convert [<id>...] [--all] [--skip-existing] [--avif-quality=50] [--webp-quality=80] [--avif-speed=8] [--lossless]
                            wp cereal-images restore <id>...
                            wp cereal-images shortpixel-leftovers
 ```
 
 v0.2.0 testée en local (WordPress simulé, faux binaires `jpegoptim`/`optipng`) : sans outil → `unavailable` ; sauvegarde ShortPixel de mêmes dimensions déplacée, de dimensions différentes ignorée (reste dans `shortpixel-leftovers`) ; relance → `existing` + `already` ; `restore` remet l'original et supprime les sidecars, sauvegarde conservée ; `--lossless` retire `--max`. Testée sur O2switch (#1815 migrée ShortPixel : `shortpixel` + `already`, AVIF principal 134,6 Ko ; #2379 récente : `created` + jpegoptim −35 % sur le principal, AVIF −70 % au total ; `restore` OK ; `jpegoptim` 1.4.6 et `optipng` 0.7.7 présents). PNG pas encore testé sur serveur.
+
+v0.4.0 testée en local puis sur O2switch : activation → bloc avec marqueurs, l'ancien bloc manuel retiré par `wp cereal-images htaccess` ; `curl` AVIF/WebP/JPEG OK ; suppression de #2381 (10 tailles) → sidecars et sauvegardes supprimés ; `htaccess --remove` puis réécriture OK. Désinstallation non testée sur serveur.
 
 v0.3.0 testée en local puis sur O2switch : sauvegarde ShortPixel de l'original non réduit déplacée (#38), hook d'upload planifié puis traité via `wp cron event run --due-now`. `convert --all` pas encore lancé sur le serveur.
 
@@ -160,7 +167,7 @@ Retour éventuel à ShortPixel (depuis `uploads`, fichiers seulement ; ShortPixe
 mkdir -p ShortpixelBackups/app/uploads && mv cereal-images-backup/* ShortpixelBackups/app/uploads/
 ```
 
-### 3. Automatisation et traitement en masse ← code écrit (v0.3.0), test O2switch à faire
+### 3. Automatisation et traitement en masse ✓ (2026-11-19)
 
 - Filtre `wp_update_attachment_metadata` (upload, régénération, éditeur d'images) → `wp_schedule_single_event(time() + 60, 'cereal_images_process', [$id])`, une seule fois tant que l'événement est en attente. Le délai laisse WordPress finir les tailles : il met à jour les métadonnées après chacune.
 - Après une modification dans l'éditeur, les nouveaux fichiers (`-e123…`) sont traités ; les anciens gardent leurs sidecars.
@@ -170,11 +177,38 @@ mkdir -p ShortpixelBackups/app/uploads && mv cereal-images-backup/* ShortpixelBa
 - **WP-Cron** : sur la préprod Sopara (authentification HTTP), il ne se déclenche jamais seul, toutes les tâches du site restaient en attente (constaté le 2026-11-19). Lancé à la main, `cereal_images_process` a traité un upload en 5 s (AVIF −75 %). Recommandé partout : `DISABLE_WP_CRON=true` dans le `.env` Bedrock + tâche cron cPanel toutes les 5 min : `cd ~/<site> && /chemin/vers/wp cron event run --due-now > /dev/null 2>&1`.
 - Upload lent (~15 s) constaté sur une photo de 1,5 Mo : pas dû au plugin (le hook ne fait que planifier), sans doute la génération des tailles par WordPress. Non vérifié plugin désactivé.
 
-### 4. Cycle de vie
+### 4. Cycle de vie ✓ (2026-11-19)
 
-- Écrire et retirer le bloc `.htaccess` d'`uploads` avec `insert_with_markers()` (marqueur `Cereal Images`) à l'activation et à la désactivation.
-- `delete_attachment` : supprimer les sidecars et la sauvegarde de chaque fichier.
-- `uninstall.php` : retirer le bloc `.htaccess` et la meta. Supprimer les sidecars, mais **garder** les sauvegardes par prudence (option explicite pour les effacer).
+Écarts au plan ci-dessous :
+
+- Purge à la suppression par le filtre `wp_delete_file` (priorité `PHP_INT_MAX`) au lieu de `delete_attachment` : WordPress l'appelle pour le principal, les tailles, l'original non réduit et les anciennes versions de l'éditeur ; un chemin vidé par une autre extension (Polylang, fichier partagé entre traductions) n'est pas purgé. Limite : une taille absente du disque ne passe pas par ce filtre, sa sauvegarde éventuelle reste.
+- Anti-collision via `attachment_url_to_postid()` (pas de SQL maison), seulement si la destination existe. Appliqué aussi à `restore`, à la purge et à la désinstallation. Statut `collision` listé avec les erreurs de `convert --all`.
+- `uninstall.php` parcourt les uploads (hors `cereal-images-backup/` et `ShortpixelBackups/`) au lieu de `Attachment::ids()` : attrape aussi les sidecars orphelins (anciennes versions de l'éditeur).
+- Pas de commande `purge-backups` (non décidée).
+
+Plan initial :
+
+Objectif : le plugin installe et retire lui-même ce qu'il ajoute, et ne laisse rien d'orphelin. Version cible : 0.4.0.
+
+1. **`.htaccess` d'`uploads`** — nouvelle classe `src/Htaccess.php` :
+   - `RULES` = le bloc validé (section « Ce qui est validé sur le serveur »), écrit avec `insert_with_markers($uploadsDir . '/.htaccess', 'Cereal Images', $lines)`. Charger `wp-admin/includes/misc.php` si `insert_with_markers` n'existe pas (activation, WP-CLI).
+   - `install(): bool`, `remove(): bool` (bloc vidé : `insert_with_markers` avec `[]`), `isInstalled(): bool` (servira à la page admin).
+   - `register_activation_hook` / `register_deactivation_hook` dans `cereal-images.php`.
+   - Commande `wp cereal-images htaccess [--remove]` : réécrit ou retire le bloc (utile en déploiement par copie, où l'activation n'est pas rejouée) et signale un fichier non accessible en écriture.
+   - **Préprod Sopara** : le bloc avait été ajouté à la main, sans marqueurs. Une copie identique des règles hors marqueurs (indentation ignorée) est retirée à chaque écriture du bloc.
+2. **Suppression d'une pièce jointe** — action `delete_attachment` (les fichiers existent encore à ce moment) → `Processor::purgeAttachment($id)` : supprime les `.avif`/`.webp` de chaque fichier et les sauvegardes (`Backup::path()`) des fichiers et de l'original non réduit. Prévoir une liste des chemins **sans** filtre `is_file` (une taille déjà absente peut avoir une sauvegarde).
+3. **`uninstall.php`** — `defined('WP_UNINSTALL_PLUGIN') || exit;`, charge `cereal-images.php` pour l'autoload (WordPress ne le charge pas à la désinstallation), retire le bloc `.htaccess`, supprime les sidecars de toutes les pièces jointes (`Attachment::ids()`), `delete_post_meta_by_key('_cereal_images')`. **Garde** `cereal-images-backup/` ; suppression seulement via une commande explicite (`wp cereal-images purge-backups --yes`, à décider).
+4. **Anti-collision** — une pièce jointe WebP/AVIF peut s'appeler `photo.jpg.webp`, comme nos sidecars (vu sur Sopara, #2016). Dans `Processor::convert()`, si la destination existe déjà et appartient à une pièce jointe (`_wp_attached_file` égal au chemin relatif), ne rien écrire **ni supprimer** : statut `collision`. Attention, le cas `larger` fait aujourd'hui `Files::remove($destination)` : c'est là que le fichier d'une pièce jointe serait effacé.
+5. **Tests** (doublures dans `tests/bootstrap.php`) : bloc `.htaccess` écrit/retiré/idempotent, `purgeAttachment` (sidecars et sauvegardes supprimés, rien d'autre), collision (fichier de pièce jointe intact dans les cas `ok` et `larger`), `uninstall.php` garde les sauvegardes. `composer check` vert.
+6. **Test O2switch** : retirer le bloc manuel, `wp plugin deactivate` puis `activate` → bloc présent avec marqueurs, `curl` AVIF/WebP/JPEG comme à l'étape 1 ; supprimer une pièce jointe de test → sidecars et sauvegardes partis ; `wp cereal-images htaccess --remove` puis réécriture.
+
+### Améliorations notées (après l'étape 4)
+
+- **WebP sans perte pour les PNG** : sur les pictos et illustrations en aplats, AVIF q50 et WebP q80 sont plus lourds que le PNG (Sopara : tous rejetés). Essayer aussi `imagewebp($image, $file, IMG_WEBP_LOSSLESS)` pour les PNG et garder le plus léger.
+- **Nettoyage des sidecars ShortPixel** restés dans `uploads` (`photo.avif`, `photo-768x768.avif`… nommés par remplacement d'extension, plus servis) : commande avec aperçu par défaut, ne supprime que `X.avif`/`X.webp` ayant un `X.jpg`/`X.png` voisin et n'appartenant à aucune pièce jointe.
+- **Ordre d'affichage WP-CLI sur O2switch** : `Success` sort avant le tableau des totaux (mélange de sorties tamponnées et non tamponnées).
+- Profils ICC non sRGB (voir « Points d'attention »).
+- Page admin (étape 5), avec oxlint/oxfmt pour son JS.
 
 ### 5. Admin minimale
 

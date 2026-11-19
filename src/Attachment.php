@@ -110,6 +110,13 @@ final class Attachment
         return array_values(array_map(intval(...), array_filter($wpdb->get_col($sql), is_numeric(...))));
     }
 
+    public static function isAttachmentFile(string $file): bool
+    {
+        $relative = Uploads::relative($file);
+
+        return $relative !== null && attachment_url_to_postid(Uploads::url() . '/' . $relative) > 0;
+    }
+
     /** Original non réduit conservé par WordPress à côté de la version -scaled, ou null s'il n'y en a pas. */
     public static function originalImage(int $attachmentId): ?string
     {

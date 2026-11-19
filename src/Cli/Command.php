@@ -6,6 +6,7 @@ namespace CerealImages\Cli;
 
 use CerealImages\Attachment;
 use CerealImages\Backup;
+use CerealImages\Htaccess;
 use CerealImages\Processor;
 use cli\progress\Bar;
 use cli\Shell;
@@ -196,7 +197,7 @@ final class Command
                 ...array_column($item['sidecars'], 'status'),
             ];
 
-            if (array_intersect($statuses, ['error', 'no-backup'])) {
+            if (array_intersect($statuses, ['error', 'no-backup', 'collision'])) {
                 $errors[] = "#{$attachmentId} " . basename($item['file']) . ' : ' . implode(', ', $statuses);
             }
         }
@@ -292,6 +293,36 @@ final class Command
         }
 
         WP_CLI::log(sprintf('%d fichiers, %s dans %s', count($files), $this->size($size, 1), $root));
+    }
+
+    /**
+     * Écrit ou retire le bloc Cereal Images du .htaccess des uploads (fait aussi à l'activation et à la désactivation).
+     *
+     * ## OPTIONS
+     *
+     * [--remove]
+     * : Retire le bloc au lieu de l'écrire.
+     *
+     * ## EXAMPLES
+     *
+     *     wp cereal-images htaccess
+     *     wp cereal-images htaccess --remove
+     *
+     * @when after_wp_load
+     *
+     * @param list<string> $args
+     * @param array<string, mixed> $assocArgs
+     */
+    public function htaccess(array $args, array $assocArgs): void
+    {
+        $remove = $this->flag($assocArgs, 'remove');
+        $path = Htaccess::path();
+
+        if (! ($remove ? Htaccess::remove() : Htaccess::install())) {
+            WP_CLI::error("{$path} n'est pas accessible en écriture.");
+        }
+
+        WP_CLI::success(($remove ? 'Bloc retiré de ' : 'Bloc écrit dans ') . $path);
     }
 
     /** @param array<string, mixed> $assocArgs */

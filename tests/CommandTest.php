@@ -21,6 +21,7 @@ final class CommandTest extends TestCase
             ['convert',             'default: 50'],
             ['restore',             '<id>...'],
             ['shortPixelLeftovers', '@subcommand shortpixel-leftovers'],
+            ['htaccess',            '[--remove]'],
         ];
     }
 

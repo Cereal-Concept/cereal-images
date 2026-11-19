@@ -6,15 +6,15 @@ namespace CerealImages;
 
 final class Backup
 {
-    private const DIRECTORY = 'cereal-images-backup';
+    public const DIRECTORY = 'cereal-images-backup';
 
-    private const SHORTPIXEL_DIRECTORY = 'ShortpixelBackups';
+    public const SHORTPIXEL_DIRECTORY = 'ShortpixelBackups';
 
     public static function path(string $file): ?string
     {
-        $relative = self::relative($file);
+        $relative = Uploads::relative($file);
 
-        return $relative === null ? null : self::uploadsDir() . '/' . self::DIRECTORY . '/' . $relative;
+        return $relative === null ? null : Uploads::dir() . '/' . self::DIRECTORY . '/' . $relative;
     }
 
     /**
@@ -22,15 +22,15 @@ final class Backup
      */
     public static function shortPixelPath(string $file): ?string
     {
-        $relative = self::relative($file);
-        $urlPath = trim((string) parse_url(wp_upload_dir(null, false)['baseurl'], PHP_URL_PATH), '/');
+        $relative = Uploads::relative($file);
+        $urlPath = trim((string) parse_url(Uploads::url(), PHP_URL_PATH), '/');
 
         return $relative === null ? null : self::shortPixelRoot() . "/{$urlPath}/{$relative}";
     }
 
     public static function shortPixelRoot(): string
     {
-        return self::uploadsDir() . '/' . self::SHORTPIXEL_DIRECTORY;
+        return Uploads::dir() . '/' . self::SHORTPIXEL_DIRECTORY;
     }
 
     /**
@@ -124,18 +124,6 @@ final class Backup
         }
 
         return rename($tmp, $to);
-    }
-
-    private static function relative(string $file): ?string
-    {
-        $prefix = self::uploadsDir() . '/';
-
-        return str_starts_with($file, $prefix) ? substr($file, strlen($prefix)) : null;
-    }
-
-    private static function uploadsDir(): string
-    {
-        return untrailingslashit(wp_upload_dir(null, false)['basedir']);
     }
 
     private static function sameDimensions(string $a, string $b): bool

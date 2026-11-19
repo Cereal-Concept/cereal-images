@@ -4,6 +4,7 @@ parameters:
     paths:
         - src/
         - cereal-images.php
+        - uninstall.php
     scanFiles:
         - vendor/php-stubs/wp-cli-stubs/wp-cli-stubs.php
     earlyTerminatingMethodCalls:

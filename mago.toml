@@ -1,7 +1,7 @@
 php-version = "8.1"
 
 [source]
-paths = ["src/", "tests/", "cereal-images.php"]
+paths = ["src/", "tests/", "cereal-images.php", "uninstall.php"]
 excludes = []
 
 [formatter]

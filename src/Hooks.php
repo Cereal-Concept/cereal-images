@@ -16,6 +16,19 @@ final class Hooks
         // Couvre l'upload, la régénération des tailles et les modifications dans l'éditeur d'images.
         add_filter('wp_update_attachment_metadata', [self::class, 'schedule'], 10, 2);
         add_action(self::EVENT, [self::class, 'process']);
+        // En dernier : une extension qui annule la suppression a déjà vidé le chemin.
+        add_filter('wp_delete_file', [self::class, 'purge'], PHP_INT_MAX);
+    }
+
+    public static function activate(): void
+    {
+        Htaccess::install();
+    }
+
+    /** Sidecars et sauvegardes restent : sans le bloc .htaccess, ils ne sont plus servis. */
+    public static function deactivate(): void
+    {
+        Htaccess::remove();
     }
 
     public static function schedule(mixed $metadata, int $attachmentId): mixed
@@ -31,5 +44,19 @@ final class Hooks
     public static function process(int|string $attachmentId): void
     {
         Processor::make()->processAttachment((int) $attachmentId);
+    }
+
+    /**
+     * Appelé pour chaque fichier supprimé par WordPress : principal, tailles, original non réduit, anciennes versions
+     * de l'éditeur. Un chemin vide signale une suppression annulée (Polylang : fichier partagé entre traductions).
+     */
+    public static function purge(mixed $file): mixed
+    {
+        if (is_string($file) && $file !== '') {
+            Sidecars::remove($file);
+            Files::remove((string) Backup::path($file));
+        }
+
+        return $file;
     }
 }

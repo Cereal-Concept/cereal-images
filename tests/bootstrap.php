@@ -106,4 +106,86 @@ function wp_schedule_single_event(int $timestamp, string $hook, array $args = []
     return true;
 }
 
+function delete_post_meta_by_key(string $key): bool
+{
+    foreach (array_keys(Wp::$meta) as $postId) {
+        unset(Wp::$meta[$postId][$key]);
+    }
+
+    return true;
+}
+
+function attachment_url_to_postid(string $url): int
+{
+    foreach (Wp::$attachments as $id => $attachment) {
+        if ($url === str_replace(Wp::$uploads, wp_upload_dir()['baseurl'], $attachment['file'])) {
+            return $id;
+        }
+    }
+
+    return 0;
+}
+
+function register_activation_hook(string $file, callable $callback): void
+{
+    Wp::$hooks['activate'] = $callback;
+}
+
+function register_deactivation_hook(string $file, callable $callback): void
+{
+    Wp::$hooks['deactivate'] = $callback;
+}
+
+/** Version simplifiée de celle de WordPress (même format, sans traduction ni filtre). */
+function insert_with_markers(string $filename, string $marker, array|string $insertion): bool
+{
+    if (! is_file($filename) && ! is_writable(dirname($filename)) || is_file($filename) && ! is_writable($filename)) {
+        return false;
+    }
+
+    $lines = is_array($insertion) ? $insertion : explode("\n", $insertion);
+
+    if ($lines) {
+        $lines = ["# Instructions {$marker}", ...$lines];
+    }
+
+    $existing = is_file($filename) ? explode("\n", (string) file_get_contents($filename)) : [];
+    $before = $existing;
+    $after = [];
+    $start = array_search("# BEGIN {$marker}", $existing, true);
+    $end = array_search("# END {$marker}", $existing, true);
+
+    if ($start !== false && $end !== false && $end > $start) {
+        $before = array_slice($existing, 0, $start);
+        $after = array_slice($existing, $end + 1);
+    }
+
+    $content = implode("\n", [...$before, "# BEGIN {$marker}", ...$lines, "# END {$marker}", ...$after]);
+
+    return file_put_contents($filename, $content) !== false;
+}
+
+/** @return list<string> */
+function extract_from_markers(string $filename, string $marker): array
+{
+    $result = [];
+    $inside = false;
+
+    foreach (is_file($filename) ? explode("\n", (string) file_get_contents($filename)) : [] as $line) {
+        if (str_contains($line, "# END {$marker}")) {
+            $inside = false;
+        }
+
+        if ($inside && ! str_starts_with($line, '#')) {
+            $result[] = $line;
+        }
+
+        if (str_contains($line, "# BEGIN {$marker}")) {
+            $inside = true;
+        }
+    }
+
+    return $result;
+}
+
 require dirname(__DIR__) . '/cereal-images.php';
