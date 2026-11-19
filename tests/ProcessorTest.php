@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace CerealImages\Tests;
 
+use CerealImages\ColorConverter;
 use CerealImages\Encoders\GdEncoder;
 use CerealImages\Optimizers\JpegoptimOptimizer;
 use CerealImages\Optimizers\OptipngOptimizer;
@@ -191,8 +192,12 @@ final class ProcessorTest extends TestCase
         self::assertArrayNotHasKey(Processor::META, Wp::$meta[1] ?? []);
     }
 
-    public function testWideGamutImageGetsNoSidecar(): void
+    public function testWideGamutImageGetsNoSidecarWithoutImagick(): void
     {
+        if (ColorConverter::isAvailable()) {
+            self::markTestSkipped('Imagick présent : l\'image est convertie en sRGB.');
+        }
+
         $file = $this->jpeg('2026/06/photo.jpg');
         self::embedProfile($file, self::iccProfile(self::DISPLAY_P3));
         file_put_contents("{$file}.webp", 'ancien sidecar aux couleurs faussées');
@@ -203,6 +208,23 @@ final class ProcessorTest extends TestCase
         self::assertSame('ok', $report[0]['optimization']['status']);
         self::assertSame('icc', $report[0]['sidecars'][0]['status']);
         self::assertFileDoesNotExist("{$file}.webp");
+    }
+
+    public function testWideGamutImageIsConvertedToSrgbWithImagick(): void
+    {
+        if (! ColorConverter::isAvailable()) {
+            self::markTestSkipped('Imagick absent dans cet environnement.');
+        }
+
+        $file = $this->jpeg('2026/06/photo.jpg');
+        self::embedProfile($file, self::iccProfile(self::DISPLAY_P3));
+        $this->attachment(1, $file);
+
+        $report = $this->processor()->processAttachment(1);
+
+        self::assertSame('ok', $report[0]['sidecars'][0]['status']);
+        self::assertFileExists("{$file}.webp");
+        self::assertSame([], $this->temporaryFiles());
     }
 
     /** @return list<array{int}> */

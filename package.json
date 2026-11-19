@@ -1,0 +1,14 @@
+{
+  "name": "cereal-images",
+  "private": true,
+  "scripts": {
+    "lint": "oxlint assets",
+    "format": "oxfmt --check assets",
+    "format:fix": "oxfmt assets",
+    "check": "npm run format && npm run lint"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.79.0",
+    "oxlint": "^1.94.0"
+  }
+}

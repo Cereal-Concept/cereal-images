@@ -43,7 +43,7 @@ final class Hooks
 
     public static function process(int|string $attachmentId): void
     {
-        Processor::make()->processAttachment((int) $attachmentId);
+        Settings::processor()->processAttachment((int) $attachmentId);
     }
 
     /**

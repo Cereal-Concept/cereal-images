@@ -18,7 +18,7 @@ final class CommandTest extends TestCase
     public static function commands(): array
     {
         return [
-            ['convert',             'default: 50'],
+            ['convert',             '[--[no-]lossless]'],
             ['restore',             '<id>...'],
             ['shortPixelLeftovers', '@subcommand shortpixel-leftovers'],
             ['shortPixelSidecars',  '@subcommand shortpixel-sidecars'],

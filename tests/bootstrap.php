@@ -188,4 +188,14 @@ function extract_from_markers(string $filename, string $marker): array
     return $result;
 }
 
+function is_admin(): bool
+{
+    return false;
+}
+
+function get_option(string $option, mixed $default = false): mixed
+{
+    return Wp::$options[$option] ?? $default;
+}
+
 require dirname(__DIR__) . '/cereal-images.php';

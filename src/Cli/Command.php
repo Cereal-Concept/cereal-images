@@ -8,6 +8,7 @@ use CerealImages\Attachment;
 use CerealImages\Backup;
 use CerealImages\Htaccess;
 use CerealImages\Processor;
+use CerealImages\Settings;
 use CerealImages\Sidecars;
 use CerealImages\Uploads;
 use cli\progress\Bar;
@@ -43,25 +44,16 @@ final class Command
      * : Ignore les pièces jointes déjà traitées.
      *
      * [--avif-quality=<n>]
-     * : Qualité AVIF (0-100).
-     * ---
-     * default: 50
-     * ---
+     * : Qualité AVIF (0-100). Par défaut : réglage de Médias > Cereal Images (50 d'origine).
      *
      * [--webp-quality=<n>]
-     * : Qualité WebP (0-100).
-     * ---
-     * default: 80
-     * ---
+     * : Qualité WebP (0-100). Par défaut : réglage (80).
      *
      * [--avif-speed=<n>]
-     * : Vitesse d'encodage AVIF (0 = lent et compact, 10 = rapide).
-     * ---
-     * default: 8
-     * ---
+     * : Vitesse d'encodage AVIF (0 = lent et compact, 10 = rapide). Par défaut : réglage (8).
      *
-     * [--lossless]
-     * : Optimisation JPG sans perte.
+     * [--[no-]lossless]
+     * : Optimisation JPG sans perte, ou avec perte (--no-lossless). Par défaut : réglage (avec perte).
      *
      * ## EXAMPLES
      *
@@ -77,12 +69,7 @@ final class Command
      */
     public function convert(array $args, array $assocArgs): void
     {
-        $processor = Processor::make(
-            $this->intOption($assocArgs, 'avif-quality', 0, 100),
-            $this->intOption($assocArgs, 'webp-quality', 0, 100),
-            $this->intOption($assocArgs, 'avif-speed', 0, 10),
-            ! $this->flag($assocArgs, 'lossless'),
-        );
+        $processor = $this->processor($assocArgs);
 
         if (! $processor->formats()) {
             WP_CLI::error('Aucun encodeur AVIF ou WebP disponible sur ce serveur.');
@@ -119,7 +106,7 @@ final class Command
             }
 
             WP_CLI::log("#{$id}");
-            format_items('table', array_map($this->optimizationRow(...), $report), [
+            $this->table(array_map(Report::optimizationRow(...), $report), [
                 'file',
                 'backup',
                 'status',
@@ -128,7 +115,7 @@ final class Command
                 'gain',
                 'time',
             ]);
-            format_items('table', $this->sidecarRows($report), [
+            $this->table(Report::sidecarRows($report), [
                 'file',
                 'format',
                 'status',
@@ -137,7 +124,7 @@ final class Command
                 'gain',
                 'time',
             ]);
-            format_items('table', $this->totalRows(Processor::summary($report)), [
+            $this->table(Report::totalRows(Processor::summary($report)), [
                 'total',
                 'before',
                 'after',
@@ -164,7 +151,7 @@ final class Command
         foreach ($ids as $index => $id) {
             $report = $processor->processAttachment($id);
             $total = Processor::mergeSummaries($total, Processor::summary($report));
-            $errors = [...$errors, ...$this->errors($id, $report)];
+            $errors = [...$errors, ...Processor::errors($id, $report)];
 
             // Le cache objet de WP-CLI grossit à chaque pièce jointe lue.
             if (($index % 50) === 49 && function_exists('wp_cache_flush_runtime')) {
@@ -180,31 +167,8 @@ final class Command
             WP_CLI::warning($error);
         }
 
-        format_items('table', $this->totalRows($total), ['total', 'before', 'after', 'gain', 'time']);
+        $this->table(Report::totalRows($total), ['total', 'before', 'after', 'gain', 'time']);
         WP_CLI::success(sprintf('%d pièces jointes traitées, %d fichiers en erreur.', count($ids), count($errors)));
-    }
-
-    /**
-     * @param list<FileReport> $report
-     * @return list<string>
-     */
-    private function errors(int $attachmentId, array $report): array
-    {
-        $errors = [];
-
-        foreach ($report as $item) {
-            $statuses = [
-                $item['backup'],
-                $item['optimization']['status'],
-                ...array_column($item['sidecars'], 'status'),
-            ];
-
-            if (array_intersect($statuses, ['error', 'no-backup', 'collision'])) {
-                $errors[] = "#{$attachmentId} " . basename($item['file']) . ' : ' . implode(', ', $statuses);
-            }
-        }
-
-        return $errors;
     }
 
     /**
@@ -237,15 +201,11 @@ final class Command
             }
 
             WP_CLI::log("#{$id}");
-            format_items(
-                'table',
-                array_map(fn (array $item) => [
-                    'file' => basename($item['file']),
-                    'status' => $item['status'],
-                    'sidecars removed' => $item['removed'],
-                ], $report),
-                ['file', 'status', 'sidecars removed'],
-            );
+            $this->table(array_map(fn (array $item) => [
+                'file' => basename($item['file']),
+                'status' => $item['status'],
+                'sidecars removed' => $item['removed'],
+            ], $report), ['file', 'status', 'sidecars removed']);
         }
     }
 
@@ -287,7 +247,7 @@ final class Command
         sort($files);
         $this->logFirst($files);
 
-        WP_CLI::log(sprintf('%d fichiers, %s dans %s', count($files), $this->size($size, 1), $root));
+        WP_CLI::log(sprintf('%d fichiers, %s dans %s', count($files), Report::size($size, 1), $root));
     }
 
     /**
@@ -318,7 +278,7 @@ final class Command
         $prefix = strlen(Uploads::dir()) + 1;
         $this->logFirst(array_map(static fn (string $file) => substr($file, $prefix), $files));
 
-        $summary = sprintf('%d fichiers, %s', count($files), $this->size($size, 1));
+        $summary = sprintf('%d fichiers, %s', count($files), Report::size($size, 1));
 
         if (! $this->flag($assocArgs, 'delete')) {
             WP_CLI::log("{$summary}. Relancer avec --delete pour les supprimer.");
@@ -360,6 +320,20 @@ final class Command
         WP_CLI::success(($remove ? 'Bloc retiré de ' : 'Bloc écrit dans ') . $path);
     }
 
+    /**
+     * format_items() écrit avec echo, WP_CLI::log() et success() directement sur STDOUT : si une extension a ouvert
+     * un tampon de sortie (constaté sur O2switch), les tableaux sortaient après les messages. Tout passe par log().
+     *
+     * @param list<array<string, mixed>> $rows
+     * @param list<string> $fields
+     */
+    private function table(array $rows, array $fields): void
+    {
+        ob_start();
+        format_items('table', $rows, $fields);
+        WP_CLI::log(rtrim((string) ob_get_clean(), "\n"));
+    }
+
     /** @param list<string> $lines */
     private function logFirst(array $lines, int $limit = 20): void
     {
@@ -379,98 +353,27 @@ final class Command
     }
 
     /** @param array<string, mixed> $assocArgs */
-    private function intOption(array $assocArgs, string $key, int $min, int $max): int
+    private function processor(array $assocArgs): Processor
     {
-        $value = filter_var($assocArgs[$key] ?? null, FILTER_VALIDATE_INT, [
-            'options' => ['min_range' => $min, 'max_range' => $max],
-        ]);
+        $overrides = [];
 
-        if ($value === false) {
-            WP_CLI::error("--{$key} doit être un entier entre {$min} et {$max}.");
-        }
+        foreach (Settings::RANGES as $key => [$min, $max]) {
+            $option = str_replace('_', '-', $key);
+            $value = $assocArgs[$option] ?? null;
 
-        return $value;
-    }
-
-    /**
-     * @param FileReport $item
-     * @return array<string, string>
-     */
-    private function optimizationRow(array $item): array
-    {
-        $optimization = $item['optimization'];
-
-        return [
-            'file' => basename($item['file']),
-            'backup' => $item['backup'],
-            'status' => $optimization['status'],
-            'before' => $this->size($optimization['before'], 1),
-            'after' => $this->size($optimization['after'], 1),
-            'gain' => $optimization['status'] === 'ok'
-                ? $this->gain($optimization['before'], $optimization['after'])
-                : '-',
-            'time' => $this->duration($optimization['time']),
-        ];
-    }
-
-    /**
-     * @param list<FileReport> $report
-     * @return list<array<string, string>>
-     */
-    private function sidecarRows(array $report): array
-    {
-        $rows = [];
-
-        foreach ($report as $item) {
-            foreach ($item['sidecars'] as $sidecar) {
-                $rows[] = [
-                    'file' => basename($item['file']),
-                    'format' => $sidecar['format'],
-                    'status' => $sidecar['status'],
-                    'served' => $this->size($sidecar['served'], 1),
-                    'result' => $sidecar['result'] ? $this->size($sidecar['result'], 1) : '-',
-                    'gain' => $sidecar['status'] === 'ok' ? $this->gain($sidecar['served'], $sidecar['result']) : '-',
-                    'time' => $this->duration($sidecar['time']),
-                ];
+            if ($value !== null && filter_var($value, FILTER_VALIDATE_INT, ['options' => [
+                'min_range' => $min,
+                'max_range' => $max,
+            ]]) === false) {
+                WP_CLI::error("--{$option} doit être un entier entre {$min} et {$max}.");
             }
+
+            $overrides[$key] = $value;
         }
 
-        return $rows;
-    }
+        // --no-lossless donne false : il doit primer sur un réglage « sans perte ».
+        $overrides['lossless'] = array_key_exists('lossless', $assocArgs) ? $this->flag($assocArgs, 'lossless') : null;
 
-    /**
-     * @param Summary $summary
-     * @return list<array<string, string>>
-     */
-    private function totalRows(array $summary): array
-    {
-        $rows = [];
-
-        foreach ($summary['after'] as $label => $after) {
-            $rows[] = [
-                'total' => $label,
-                'before' => $this->size($summary['before'], 1),
-                'after' => $this->size($after, 1),
-                'gain' => $this->gain($summary['before'], $after),
-                'time' => $this->duration($summary['time'][$label]),
-            ];
-        }
-
-        return $rows;
-    }
-
-    private function size(int $bytes, int $decimals = 1): string
-    {
-        return size_format($bytes, $decimals) ?: '-';
-    }
-
-    private function gain(int $source, int $result): string
-    {
-        return $source ? round((1 - ($result / $source)) * 100) . ' %' : '-';
-    }
-
-    private function duration(float $seconds): string
-    {
-        return number_format($seconds, 1, ',', '') . ' s';
+        return Settings::processor(array_filter($overrides, static fn (mixed $value) => $value !== null));
     }
 }

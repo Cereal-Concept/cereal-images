@@ -83,12 +83,7 @@ final class Processor
                 'file' => $file,
                 'backup' => $backup,
                 'optimization' => $optimization,
-                'sidecars' => ColorProfile::isSafeForGd($source)
-                    ? array_map(fn (Encoder $encoder) => [
-                        'format' => $encoder->format(),
-                        ...$this->convert($source, $file, $optimization['after'], $encoder),
-                    ], $this->encoders)
-                    : $this->skipForColorProfile($file, $optimization['after']),
+                'sidecars' => $this->sidecars($source, $file, $optimization['after']),
             ];
         }
 
@@ -133,6 +128,31 @@ final class Processor
     }
 
     /**
+     * Fichiers à signaler : sans sauvegarde, en erreur ou en collision avec une pièce jointe.
+     *
+     * @param list<FileReport> $report
+     * @return list<string>
+     */
+    public static function errors(int $attachmentId, array $report): array
+    {
+        $errors = [];
+
+        foreach ($report as $item) {
+            $statuses = [
+                $item['backup'],
+                $item['optimization']['status'],
+                ...array_column($item['sidecars'], 'status'),
+            ];
+
+            if (array_intersect($statuses, ['error', 'no-backup', 'collision'])) {
+                $errors[] = "#{$attachmentId} " . basename($item['file']) . ' : ' . implode(', ', $statuses);
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
      * @param Summary $a
      * @param Summary $b
      * @return Summary
@@ -163,7 +183,41 @@ final class Processor
     }
 
     /**
-     * Profil couleur non sRGB : l'original est servi, un ancien sidecar (aux couleurs faussées) est supprimé.
+     * Profil couleur non sRGB : GD l'ignorerait, on encode depuis une copie convertie en sRGB par Imagick.
+     *
+     * @return list<Sidecar>
+     */
+    private function sidecars(string $source, string $file, int $servedSize): array
+    {
+        if (ColorProfile::isSafeForGd($source)) {
+            return $this->encodeAll($source, $file, $servedSize);
+        }
+
+        // Même extension que l'image : les encodeurs choisissent leur lecture d'après elle.
+        $srgb = (string) preg_replace('/(\.[^.]+)$/', '.cereal-tmp-srgb$1', $file);
+
+        if (! ColorConverter::toSrgb($source, $srgb)) {
+            return $this->skipForColorProfile($file, $servedSize);
+        }
+
+        try {
+            return $this->encodeAll($srgb, $file, $servedSize);
+        } finally {
+            Files::remove($srgb);
+        }
+    }
+
+    /** @return list<Sidecar> */
+    private function encodeAll(string $source, string $file, int $servedSize): array
+    {
+        return array_map(fn (Encoder $encoder) => [
+            'format' => $encoder->format(),
+            ...$this->convert($source, $file, $servedSize, $encoder),
+        ], $this->encoders);
+    }
+
+    /**
+     * Profil couleur non sRGB et Imagick absent : l'original est servi, un ancien sidecar (aux couleurs faussées) est supprimé.
      *
      * @return list<Sidecar>
      */

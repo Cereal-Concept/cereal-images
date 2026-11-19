@@ -20,11 +20,15 @@ final class Wp
     /** @var array<string, int> */
     public static array $cron = [];
 
+    /** @var array<string, mixed> */
+    public static array $options = [];
+
     public static function reset(string $uploads): void
     {
         self::$uploads = $uploads;
         self::$attachments = [];
         self::$meta = [];
         self::$cron = [];
+        self::$options = [];
     }
 }

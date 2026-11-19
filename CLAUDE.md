@@ -31,12 +31,13 @@ Outils en `require-dev` uniquement (`composer install` dans le dossier du plugin
 | `composer analyse` | PHPStan niveau max + stubs WordPress et WP-CLI |
 | `composer test` | PHPUnit (`tests/`) |
 | `composer check` | les quatre, **à lancer avant chaque commit** |
+| `npm run check` | JS de `assets/` : oxfmt (formatage) puis oxlint (`.oxlintrc.json`) ; `npm install` d'abord |
 
 - Pas de baseline ni de `@phpstan-ignore` : corriger la cause. Les seules exceptions Mago sont des `@mago-expect` commentés (opérateur `@` autour de GD, qui avertit sur une image corrompue ou un codec absent).
 - `mago.toml` : seuils de complexité relevés par classe (40) mais bornés par méthode (10) ; `kan-defect` désactivé.
-- Tests : doublures des fonctions WordPress dans `tests/bootstrap.php` (état dans `tests/Wp.php`), uploads dans un dossier temporaire, faux `jpegoptim`/`optipng` dans `tests/bin/` (ajoutés au `PATH`), doublures `FixedSizeEncoder` et `GrowingOptimizer`. Le test AVIF est ignoré si GD n'a pas le codec. `Attachment::ids()` (SQL direct) n'est pas couvert : à vérifier sur un vrai WordPress.
-- **Déploiement par copie de dossier : ne pas envoyer `vendor/`** (ni `tests/`, `mago.toml`…). `.gitattributes` les exclut d'une archive Git/Composer.
-- JS (oxlint, oxfmt) : à ajouter avec la page admin (étape 5).
+- Tests : doublures des fonctions WordPress dans `tests/bootstrap.php` (état dans `tests/Wp.php`), uploads dans un dossier temporaire, faux `jpegoptim`/`optipng` dans `tests/bin/` (ajoutés au `PATH`), doublures `FixedSizeEncoder` et `GrowingOptimizer`. Le test AVIF est ignoré si GD n'a pas le codec, celui de la conversion sRGB si Imagick est absent (cas en local). `Attachment::ids()` (SQL direct) n'est pas couvert : à vérifier sur un vrai WordPress.
+- **Déploiement par copie de dossier : ne pas envoyer `vendor/` ni `node_modules/`** (ni `tests/`, `mago.toml`, `package.json`…). `assets/` doit partir. `.gitattributes` les exclut d'une archive Git/Composer.
+- JS sans build (pas de bundler) : `assets/admin.js` s'appuie sur `wp-api-fetch` (URL de l'API et nonce REST fournis par WordPress).
 
 ## Environnement cible : O2switch (mutualisé)
 
@@ -92,7 +93,7 @@ Pour tester (la préprod est derrière une authentification HTTP) :
 curl -sI -u "$AUTH" -H "Accept: image/avif,image/webp,*/*" "$URL" | grep -iE "^HTTP|content-type|content-length|vary"
 ```
 
-## État du code (v0.5.0, non commitée)
+## État du code (v0.7.0)
 
 ```
 cereal-images.php          en-tête du plugin, autoload, activation/désactivation (bloc .htaccess), enregistrement WP-CLI
@@ -102,6 +103,7 @@ src/Files.php              Files::remove() (suppression sans erreur si absent)
 src/Uploads.php            dossier et URL des uploads, chemin relatif
 src/Htaccess.php           bloc « Cereal Images » dans uploads/.htaccess (insert_with_markers), install/remove/isInstalled
 src/Sidecars.php           suppression des .avif/.webp d'une image ou de tous les uploads, jamais d'un fichier de pièce jointe ; sidecars ShortPixel
+src/ColorConverter.php     Imagick : copie convertie en sRGB (assets/srgb.icc, sRGB-v4 de Compact-ICC-Profiles, CC0) pour encoder les profils larges
 src/ColorProfile.php       profil ICC (APP2 JPEG, iCCP PNG) : sRGB reconnu à ses primaires (rXYZ/gXYZ/bXYZ, tolérance 0,005)
 src/Hooks.php              wp_update_attachment_metadata → événement cron cereal_images_process (+60 s) ; wp_delete_file → purge sidecars + sauvegarde
 src/Backup.php             sauvegarde dans cereal-images-backup/, reprise (déplacement) de la sauvegarde ShortPixel, restauration
@@ -110,8 +112,14 @@ src/Processor.php          par fichier : sauvegarde → optimisation → sidecar
 src/Encoders/Encoder.php   interface format()/isAvailable()/encode()
 src/Encoders/GdEncoder.php GD : AVIF q50 speed 8, WebP q80 (PNG : avec et sans perte, le plus léger), PNG palette → truecolor, alpha conservé ; disponibilité testée par un vrai encodage 1×1
 src/Optimizers/            interface Optimizer, JpegoptimOptimizer (-m82, ICC conservé), OptipngOptimizer (-o2)
+src/Settings.php           option cereal_images_settings (qualités, vitesse, sans perte) ; Settings::processor($overrides) pour le cron et le WP-CLI
+src/Stats.php              totaux médiathèque depuis la meta _cereal_images (Attachment::processedMeta, SQL direct non couvert)
+src/Admin/Page.php         Médias > Cereal Images : statistiques, état du serveur, bouton « Réécrire le bloc .htaccess », réglages (Settings API)
+src/Admin/Rest.php         cereal-images/v1 : GET queue?mode=unprocessed|processed|all, POST process/<id>, POST restore/<id> (manage_options)
+assets/admin.js            boucle de traitement en masse, progression, arrêt, erreurs
+src/Cli/Report.php         lignes des tableaux WP-CLI (tailles, gains, durées, erreurs)
 src/Cli/Command.php        wp cereal-images htaccess [--remove]
-                           wp cereal-images convert [<id>...] [--all] [--skip-existing] [--avif-quality=50] [--webp-quality=80] [--avif-speed=8] [--lossless]
+                           wp cereal-images convert [<id>...] [--all] [--skip-existing] [--avif-quality=<n>] [--webp-quality=<n>] [--avif-speed=<n>] [--[no-]lossless] (par défaut : réglages)
                            wp cereal-images restore <id>...
                            wp cereal-images shortpixel-leftovers
                            wp cereal-images shortpixel-sidecars [--delete]
@@ -207,10 +215,19 @@ Objectif : le plugin installe et retire lui-même ce qu'il ajoute, et ne laisse 
 ### Améliorations notées (après l'étape 4)
 
 - ✓ v0.5.0 (testée sur O2switch le 2026-11-19 : P3 #2382 → tout en `icc` ; PNG #2054 → AVIF −68 %, WebP −60 % ; logos de 1 Ko toujours plus légers en PNG, normal ; `shortpixel-sidecars` : 1 567 fichiers, 109 Mo) : **profils couleur** (sidecars non générés, statut `icc`, ancien sidecar supprimé), **WebP sans perte pour les PNG** (`IMG_WEBP_LOSSLESS`, gardé s'il est plus léger que le WebP avec perte), **`shortpixel-sidecars [--delete]`** (aperçu par défaut, `X.avif`/`X.webp` avec un `X.jpg|jpeg|png` voisin, hors pièces jointes et dossiers de sauvegarde).
-- **Ordre d'affichage WP-CLI sur O2switch** : `Success` sort avant le tableau des totaux (mélange de sorties tamponnées et non tamponnées).
-- Page admin (étape 5), avec oxlint/oxfmt pour son JS.
+- ✓ v0.7.0 (O2switch le 2026-11-19 : P3 → AVIF/WebP `ok`, aucun fichier temporaire restant ; `#id` et tableaux bien alternés) :
+  - **Profils larges convertis** : si Imagick est présent, sidecars encodés depuis une copie sRGB temporaire (`photo.cereal-tmp-srgb.jpg`, JPEG q98 sans sous-échantillonnage, supprimée après) ; sinon statut `icc` comme avant. Non testable en local (pas d'Imagick) : test ignoré.
+  - **Ordre d'affichage WP-CLI** : `format_items()` écrit avec `echo` (via `WP_CLI::line`), `log()`/`success()` en `fwrite(STDOUT)` ; une extension qui ouvre un tampon de sortie retardait les tableaux (vu : tous les `#id` puis tous les tableaux). Les tableaux passent désormais par `ob_start()` + `WP_CLI::log()`.
 
-### 5. Admin minimale
+### 5. Admin minimale ✓ (2026-11-19)
+
+- **5a. Serveur et réglages** ✓ (O2switch : réglage AVIF 40 → 257,9 Ko, `--avif-quality=50` → 365,4 Ko). Réglages utilisés par le cron et par défaut en WP-CLI (options en ligne de commande prioritaires). Les images déjà traitées ne changent pas.
+- **5b. Statistiques** ✓ (O2switch : 304 traitées sur 304) : traitées / total, poids servi avant/après par format, depuis la meta `_cereal_images`.
+- **5c. Traitement en masse** ✓ (O2switch : non traitées puis arrêt de « Tout retraiter » OK). Boutons « Traiter les images non traitées » et « Tout retraiter » (avec confirmation, sidecars régénérés aux réglages actuels) : une pièce jointe par requête REST (pas de `max_execution_time`), progression, arrêt, erreurs listées. JS sans build dans `assets/admin.js`, oxlint + oxfmt (`npm run check`) ; `package.json`/`node_modules` exclus du déploiement, `assets/` envoyé.
+- **5d. Restauration globale** ✓ (O2switch : arrêt après quelques pièces jointes, retraitées ensuite). Bouton « Tout restaurer » (liste : pièces jointes avec meta), confirmation qui prévient du poids des originaux ShortPixel : même boucle avec `restore`, confirmation explicite.
+- Pas de colonne dans la médiathèque pour l'instant.
+
+Description initiale :
 
 Une page Médias > Cereal Images : formats et outils disponibles sur le serveur, qualités, mode JPG avec ou sans perte, stats (pièces jointes traitées, gain total), lancement et progression du traitement en masse, restauration globale. Colonne de statut dans la médiathèque si c'est utile.
 
@@ -235,7 +252,7 @@ Pièges rencontrés : originaux tournés par ShortPixel (orientation EXIF, dimen
 
 ## Points d'attention techniques
 
-- **Profils couleur** : GD ignore les profils ICC. Une photo en Display P3 (iPhone) peut ternir en AVIF/WebP. Fait (v0.5.0) : profil RGB non sRGB → pas de sidecar, l'original est servi. Sur O2switch, WordPress génère les tailles avec Imagick, qui garde le profil : toutes les tailles d'une photo P3 sont donc `icc` (vérifié, #2382). Piste : convertir en sRGB avec Imagick (`transformImageColorspace`/`profileImage`) avant l'encodage, pour leur donner quand même des sidecars. Profils vérifiés : sRGB (Linux, Windows) acceptés ; Adobe RGB, écran Dell P3 refusés. CMYK et gris laissés passer.
+- **Profils couleur** : GD ignore les profils ICC. Une photo en Display P3 (iPhone) peut ternir en AVIF/WebP. Fait (v0.5.0) : profil RGB non sRGB → pas de sidecar, l'original est servi. Sur O2switch, WordPress génère les tailles avec Imagick, qui garde le profil : toutes les tailles d'une photo P3 sont donc `icc` (vérifié, #2382). v0.7.0 : avec Imagick, conversion en sRGB (`profileImage`, LittleCMS) avant l'encodage, donc sidecars quand même. Profils vérifiés : sRGB (Linux, Windows) acceptés ; Adobe RGB, écran Dell P3 refusés. CMYK et gris laissés passer.
 - **Transparence** : `imagealphablending(false)` + `imagesavealpha(true)` avant l'encodage, PNG palette converti en truecolor (déjà fait).
 - **Mémoire et temps** : traiter une pièce jointe par tâche. L'AVIF sur une image de 2560 px prend plusieurs secondes avec GD.
 - **Écritures atomiques** : toujours écrire en `.tmp` puis `rename()`, pour que le `.htaccess` ne serve jamais un fichier partiel.

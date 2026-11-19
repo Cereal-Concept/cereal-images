@@ -59,6 +59,25 @@ final class Attachment
         ));
     }
 
+    /**
+     * Meta `_cereal_images` de toutes les pièces jointes, désérialisées.
+     *
+     * @return list<mixed>
+     */
+    public static function processedMeta(): array
+    {
+        $wpdb = self::wpdb();
+        $sql = $wpdb?->prepare('SELECT meta_value FROM %i WHERE meta_key = %s', $wpdb->postmeta, Processor::META);
+
+        if (! $wpdb || ! is_string($sql)) {
+            return [];
+        }
+
+        return array_values(array_map(static fn (mixed $value) => is_string($value)
+            ? maybe_unserialize($value)
+            : null, $wpdb->get_col($sql)));
+    }
+
     public static function isProcessable(int $attachmentId): bool
     {
         return (bool) preg_match(self::EXTENSIONS, (string) get_attached_file($attachmentId));
