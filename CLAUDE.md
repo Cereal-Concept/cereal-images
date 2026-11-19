@@ -14,11 +14,29 @@ Hors périmètre pour l'instant : OVH, Nginx, CDN, réécriture HTML en `<pictur
 
 ## Conventions de code
 
-- PHP 8.1 minimum (prod O2switch en 8.4), `declare(strict_types=1)`, namespace `CerealImages`, autoload maison dans `cereal-images.php` (pas de dépendance Composer à l'exécution).
+- PHP 8.1 minimum (prod O2switch en 8.4), `declare(strict_types=1)`, namespace `CerealImages`, autoload maison dans `cereal-images.php` (pas de dépendance Composer à l'exécution). Attention à la syntaxe 8.4 : `new X()->m()` est interdit, écrire `(new X())->m()`.
 - Code lisible avant tout, commentaires rares (seulement le pourquoi non évident). Les docblocks WP-CLI sont fonctionnels, ils restent.
 - Pas de patterns pour le principe : pas de container, pas de couches d'abstraction sans deuxième implémentation réelle. L'interface `Encoder` existe parce que des encodeurs par binaire arriveront.
 - Avancer par petites étapes vérifiables, chacune testée sur le serveur avant de passer à la suivante.
 - Installation : soit dossier dans `web/app/plugins/` (Bedrock), soit via Composer (`type: wordpress-plugin`).
+
+## Qualité
+
+Outils en `require-dev` uniquement (`composer install` dans le dossier du plugin) :
+
+| Commande | Outil |
+|---|---|
+| `composer format` / `composer format:fix` | Mago, formatage (cible PHP 8.1) |
+| `composer lint` | Mago, lint (`mago.toml`) |
+| `composer analyse` | PHPStan niveau max + stubs WordPress et WP-CLI |
+| `composer test` | PHPUnit (`tests/`) |
+| `composer check` | les quatre, **à lancer avant chaque commit** |
+
+- Pas de baseline ni de `@phpstan-ignore` : corriger la cause. Les seules exceptions Mago sont des `@mago-expect` commentés (opérateur `@` autour de GD, qui avertit sur une image corrompue ou un codec absent).
+- `mago.toml` : seuils de complexité relevés par classe (40) mais bornés par méthode (10) ; `kan-defect` désactivé.
+- Tests : doublures des fonctions WordPress dans `tests/bootstrap.php` (état dans `tests/Wp.php`), uploads dans un dossier temporaire, faux `jpegoptim`/`optipng` dans `tests/bin/` (ajoutés au `PATH`), doublures `FixedSizeEncoder` et `GrowingOptimizer`. Le test AVIF est ignoré si GD n'a pas le codec. `Attachment::ids()` (SQL direct) n'est pas couvert : à vérifier sur un vrai WordPress.
+- **Déploiement par copie de dossier : ne pas envoyer `vendor/`** (ni `tests/`, `mago.toml`…). `.gitattributes` les exclut d'une archive Git/Composer.
+- JS (oxlint, oxfmt) : à ajouter avec la page admin (étape 5).
 
 ## Environnement cible : O2switch (mutualisé)
 
@@ -74,23 +92,27 @@ Pour tester (la préprod est derrière une authentification HTTP) :
 curl -sI -u "$AUTH" -H "Accept: image/avif,image/webp,*/*" "$URL" | grep -iE "^HTTP|content-type|content-length|vary"
 ```
 
-## État du code (v0.2.0)
+## État du code (v0.3.0)
 
 ```
 cereal-images.php          en-tête du plugin, autoload, enregistrement WP-CLI
-src/Attachment.php         liste les fichiers JPG/PNG d'une pièce jointe (principal + tailles)
+src/Attachment.php         fichiers JPG/PNG d'une pièce jointe (principal + tailles), original non réduit, ID (SQL direct, %i : WP 6.2+)
+src/Files.php              Files::remove() (suppression sans erreur si absent)
+src/Hooks.php              wp_update_attachment_metadata → événement cron cereal_images_process (+60 s)
 src/Backup.php             sauvegarde dans cereal-images-backup/, reprise (déplacement) de la sauvegarde ShortPixel, restauration
 src/Shell.php              exec() + escapeshellarg, détection des binaires via command -v
-src/Processor.php          par fichier : sauvegarde → optimisation → sidecars (encodés depuis la sauvegarde, comparés au fichier servi)
+src/Processor.php          par fichier : sauvegarde → optimisation → sidecars (encodés depuis la sauvegarde, comparés au fichier servi) ; meta _cereal_images
 src/Encoders/Encoder.php   interface format()/isAvailable()/encode()
-src/Encoders/GdEncoder.php GD : AVIF q50 speed 8, WebP q80, PNG palette → truecolor, alpha conservé
+src/Encoders/GdEncoder.php GD : AVIF q50 speed 8, WebP q80, PNG palette → truecolor, alpha conservé ; disponibilité testée par un vrai encodage 1×1
 src/Optimizers/            interface Optimizer, JpegoptimOptimizer (-m82, ICC conservé), OptipngOptimizer (-o2)
-src/Cli/Command.php        wp cereal-images convert <id>... [--avif-quality=50] [--webp-quality=80] [--avif-speed=8] [--lossless]
+src/Cli/Command.php        wp cereal-images convert [<id>...] [--all] [--skip-existing] [--avif-quality=50] [--webp-quality=80] [--avif-speed=8] [--lossless]
                            wp cereal-images restore <id>...
                            wp cereal-images shortpixel-leftovers
 ```
 
-v0.2.0 testée en local (WordPress simulé, faux binaires `jpegoptim`/`optipng`) : sans outil → `unavailable` ; sauvegarde ShortPixel de mêmes dimensions déplacée, de dimensions différentes ignorée (reste dans `shortpixel-leftovers`) ; relance → `existing` + `already` ; `restore` remet l'original et supprime les sidecars, sauvegarde conservée ; `--lossless` retire `--max`. **Pas encore testée sur O2switch.**
+v0.2.0 testée en local (WordPress simulé, faux binaires `jpegoptim`/`optipng`) : sans outil → `unavailable` ; sauvegarde ShortPixel de mêmes dimensions déplacée, de dimensions différentes ignorée (reste dans `shortpixel-leftovers`) ; relance → `existing` + `already` ; `restore` remet l'original et supprime les sidecars, sauvegarde conservée ; `--lossless` retire `--max`. Testée sur O2switch (#1815 migrée ShortPixel : `shortpixel` + `already`, AVIF principal 134,6 Ko ; #2379 récente : `created` + jpegoptim −35 % sur le principal, AVIF −70 % au total ; `restore` OK ; `jpegoptim` 1.4.6 et `optipng` 0.7.7 présents). PNG pas encore testé sur serveur.
+
+v0.3.0 testée en local puis sur O2switch : sauvegarde ShortPixel de l'original non réduit déplacée (#38), hook d'upload planifié puis traité via `wp cron event run --due-now`. `convert --all` pas encore lancé sur le serveur.
 
 Historique v0.1.0 :
 
@@ -117,7 +139,7 @@ wp cereal-images convert <ID>
 
 Vérifier que l'AVIF est généré pour toutes les tailles et que les gains sont cohérents. Ajuster les qualités si besoin (AVIF 50–60, WebP 75–82).
 
-### 2. Optimisation des JPG/PNG avec sauvegarde ← code écrit (v0.2.0), test O2switch à faire
+### 2. Optimisation des JPG/PNG avec sauvegarde ✓ (2026-11-19)
 
 Flux par fichier (principal + tailles) :
 
@@ -138,12 +160,15 @@ Retour éventuel à ShortPixel (depuis `uploads`, fichiers seulement ; ShortPixe
 mkdir -p ShortpixelBackups/app/uploads && mv cereal-images-backup/* ShortpixelBackups/app/uploads/
 ```
 
-### 3. Automatisation et traitement en masse
+### 3. Automatisation et traitement en masse ← code écrit (v0.3.0), test O2switch à faire
 
-- À l'upload : se brancher sur `wp_generate_attachment_metadata` et **planifier** le traitement (`wp_schedule_single_event`) plutôt que de le faire pendant la requête : l'AVIF est lent et bloquerait l'upload.
-- Après une modification dans l'éditeur d'images de WordPress (recadrage, rotation), régénérer les sidecars de la pièce jointe (`wp_update_attachment_metadata` ou `wp_save_image_editor_file`).
-- En masse : `wp cereal-images convert --all [--skip-existing]` en premier (SSH disponible sur O2switch), avec une barre de progression. Une version admin par lots (AJAX, une pièce jointe par requête) viendra à l'étape 5.
-- Marquer les pièces jointes traitées avec une meta légère (`_cereal_images` : date, version, statut) pour `--skip-existing` et les stats. Ne pas modifier `_wp_attachment_metadata`.
+- Filtre `wp_update_attachment_metadata` (upload, régénération, éditeur d'images) → `wp_schedule_single_event(time() + 60, 'cereal_images_process', [$id])`, une seule fois tant que l'événement est en attente. Le délai laisse WordPress finir les tailles : il met à jour les métadonnées après chacune.
+- Après une modification dans l'éditeur, les nouveaux fichiers (`-e123…`) sont traités ; les anciens gardent leurs sidecars.
+- En masse : `wp cereal-images convert --all [--skip-existing]`, barre de progression, erreurs listées à la fin, totaux. Une version admin par lots viendra à l'étape 5.
+- Meta `_cereal_images` : `version`, `date`, `before`, `after` (poids servi par format). Supprimée par `restore`. `_wp_attachment_metadata` jamais modifiée.
+- L'original non réduit (`original_image`) : seule sa sauvegarde ShortPixel est reprise (déplacée), sans copie, optimisation ni sidecars.
+- **WP-Cron** : sur la préprod Sopara (authentification HTTP), il ne se déclenche jamais seul, toutes les tâches du site restaient en attente (constaté le 2026-11-19). Lancé à la main, `cereal_images_process` a traité un upload en 5 s (AVIF −75 %). Recommandé partout : `DISABLE_WP_CRON=true` dans le `.env` Bedrock + tâche cron cPanel toutes les 5 min : `cd ~/<site> && /chemin/vers/wp cron event run --due-now > /dev/null 2>&1`.
+- Upload lent (~15 s) constaté sur une photo de 1,5 Mo : pas dû au plugin (le hook ne fait que planifier), sans doute la génération des tailles par WordPress. Non vérifié plugin désactivé.
 
 ### 4. Cycle de vie
 
@@ -155,12 +180,23 @@ mkdir -p ShortpixelBackups/app/uploads && mv cereal-images-backup/* ShortpixelBa
 
 Une page Médias > Cereal Images : formats et outils disponibles sur le serveur, qualités, mode JPG avec ou sans perte, stats (pièces jointes traitées, gain total), lancement et progression du traitement en masse, restauration globale. Colonne de statut dans la médiathèque si c'est utile.
 
-### 6. Migration depuis ShortPixel (à préciser sur un vrai site)
+### 6. Migration depuis ShortPixel (validée sur la préprod Sopara le 2026-11-19)
+
+Procédure, depuis `uploads` :
+
+1. `wp cereal-images convert --all --skip-existing` (via `nohup … > ~/cereal-all.log 2>&1 &` ; ~2,3 s par pièce jointe).
+2. `wp cereal-images shortpixel-leftovers` : ce qui reste doit s'expliquer (pièces jointes supprimées, pièces jointes WebP hors périmètre). Diagnostic des restes : chercher la pièce jointe par `_wp_attached_file` (attention : l'original peut être un `.heic`).
+3. Sauvegardes ShortPixel des pièces jointes WebP : déplacées à la main vers `cereal-images-backup/` (`mv -n`, même arborescence).
+4. `shortpixel-leftovers` à 0 → `rm -r ShortpixelBackups`.
+
+Pièges rencontrés : originaux tournés par ShortPixel (orientation EXIF, dimensions inversées, gérés pour l'original non réduit seulement) ; photos HEIC converties par WordPress (type MIME `image/heic`, fichiers `.jpg` : la sélection se fait par extension du fichier affiché) ; pièce jointe WebP nommée `photo.jpg.webp`, identique à notre nommage de sidecar (pas de collision sur Sopara : aucun `photo.jpg` du même nom, mais un risque théorique d'écrasement existe).
+
 
 - Désactiver la livraison WebP/AVIF de ShortPixel et retirer son bloc du `.htaccess` racine (marqueur `ShortPixelWebp` à confirmer) avant d'activer Cereal Images.
 - `uploads/ShortpixelBackups/` contient les originaux d'avant ShortPixel, **toutes tailles comprises**. Arborescence = chemin d'URL des uploads sous `ShortpixelBackups/` : sur Bedrock `ShortpixelBackups/app/uploads/2026/06/photo.jpg` (à calculer depuis le chemin de `wp_upload_dir()['baseurl']`). Sopara : 1,1 Go.
 - ShortPixel compresse fort (Sopara #1815 : principal 1 655 Ko → 174,5 Ko, tailles −65 %). Ne pas réoptimiser ces JPG (double perte, et `jpegoptim -m82` depuis l'original ne ferait pas mieux).
 - Mesuré sur #1815 (AVIF q50 speed 8) : l'AVIF tiré de la sauvegarde ShortPixel ne pèse que 2 à 8 % de plus que celui tiré du JPEG ShortPixel, et reste bien sous le JPEG servi (principal 137,8 Ko contre 178,7 Ko). Donc : sauvegarde ShortPixel = sauvegarde de référence et source des sidecars, sans repasser par une compression avec perte.
+- `--all` sur Sopara (2026-11-19) : 301 pièces jointes, 0 erreur, ~11 min ; poids servi 150,1 Mo → AVIF 89,6 Mo (−40 %), WebP 116,7 Mo (−22 %) ; JPG tous `already`. `ShortpixelBackups` : 1,1 Go → 25 Mo (31 fichiers). Restes analysés : originaux non réduits dont ShortPixel avait appliqué l'orientation EXIF (largeur/hauteur inversées → acceptées depuis pour l'original seulement, `adoptShortPixelOriginal`) ; fichiers orphelins sans pièce jointe ; pièces jointes WebP (hors périmètre, sauvegardes à déplacer à la main).
 - Leurs sidecars remplacent l'extension (`photo.avif`, vu sur Sopara ; `photo.webp` probable) : aucune collision avec les nôtres (`photo.jpg.avif`), à nettoyer après bascule.
 
 ## Points d'attention techniques

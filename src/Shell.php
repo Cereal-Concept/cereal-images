@@ -22,7 +22,7 @@ final class Shell
     /** @param list<string> $args */
     public static function run(string $binary, array $args): bool
     {
-        exec($binary.' '.implode(' ', array_map('escapeshellarg', $args)).' 2>&1', $output, $code);
+        exec($binary . ' ' . implode(' ', array_map('escapeshellarg', $args)) . ' 2>&1', $output, $code);
 
         return $code === 0;
     }

@@ -1,0 +1,12 @@
+parameters:
+    level: max
+    phpVersion: 80100
+    paths:
+        - src/
+        - cereal-images.php
+    scanFiles:
+        - vendor/php-stubs/wp-cli-stubs/wp-cli-stubs.php
+    earlyTerminatingMethodCalls:
+        WP_CLI:
+            - error
+            - halt

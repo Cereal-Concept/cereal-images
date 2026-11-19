@@ -1,0 +1,6 @@
+#!/bin/sh
+# Faux jpegoptim : réencode le dernier argument en qualité 60 (option --max présente) ou 85 (sans perte simulée).
+for arg; do file=$arg; done
+quality=85
+case " $* " in *" --max="*) quality=60 ;; esac
+php -r 'imagejpeg(imagecreatefromjpeg($argv[1]), $argv[1], (int) $argv[2]);' "$file" "$quality"

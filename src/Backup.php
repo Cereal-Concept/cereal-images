@@ -14,7 +14,7 @@ final class Backup
     {
         $relative = self::relative($file);
 
-        return $relative === null ? null : self::uploadsDir().'/'.self::DIRECTORY.'/'.$relative;
+        return $relative === null ? null : self::uploadsDir() . '/' . self::DIRECTORY . '/' . $relative;
     }
 
     /**
@@ -25,12 +25,12 @@ final class Backup
         $relative = self::relative($file);
         $urlPath = trim((string) parse_url(wp_upload_dir(null, false)['baseurl'], PHP_URL_PATH), '/');
 
-        return $relative === null ? null : self::shortPixelRoot()."/{$urlPath}/{$relative}";
+        return $relative === null ? null : self::shortPixelRoot() . "/{$urlPath}/{$relative}";
     }
 
     public static function shortPixelRoot(): string
     {
-        return self::uploadsDir().'/'.self::SHORTPIXEL_DIRECTORY;
+        return self::uploadsDir() . '/' . self::SHORTPIXEL_DIRECTORY;
     }
 
     /**
@@ -54,14 +54,42 @@ final class Backup
             return 'error';
         }
 
-        // Déplacée et non copiée : le dossier ShortPixel ne doit pas rester seul garant des originaux, et le quota est limité.
-        $shortPixel = self::shortPixelPath($file);
-
-        if ($shortPixel && is_file($shortPixel) && self::sameDimensions($file, $shortPixel) && rename($shortPixel, $backup)) {
+        if (self::adoptShortPixel($file)) {
             return 'shortpixel';
         }
 
         return self::copy($file, $backup) ? 'created' : 'error';
+    }
+
+    /**
+     * Déplace la sauvegarde ShortPixel du fichier dans notre dossier, si elle existe et a les mêmes dimensions.
+     * Déplacée et non copiée : le dossier ShortPixel ne doit pas rester seul garant des originaux, et le quota est limité.
+     */
+    public static function adoptShortPixel(string $file): bool
+    {
+        return self::moveShortPixel($file, self::sameDimensions(...));
+    }
+
+    /**
+     * Pour l'original non réduit, largeur et hauteur peuvent être inversées : ShortPixel applique l'orientation EXIF
+     * des photos de téléphone en compressant. Jamais pour un fichier converti : GD ignore l'EXIF, le sidecar serait tourné.
+     */
+    public static function adoptShortPixelOriginal(string $file): bool
+    {
+        return self::moveShortPixel($file, self::sameOrRotatedDimensions(...));
+    }
+
+    /** @param callable(string, string): bool $matches */
+    private static function moveShortPixel(string $file, callable $matches): bool
+    {
+        $backup = self::path($file);
+        $shortPixel = self::shortPixelPath($file);
+
+        if ($backup === null || $shortPixel === null || is_file($backup) || ! is_file($shortPixel)) {
+            return false;
+        }
+
+        return $matches($file, $shortPixel) && wp_mkdir_p(dirname($backup)) && rename($shortPixel, $backup);
     }
 
     public static function restore(string $file): bool
@@ -90,7 +118,7 @@ final class Backup
         $tmp = "{$to}.tmp";
 
         if (! copy($from, $tmp)) {
-            @unlink($tmp);
+            Files::remove($tmp);
 
             return false;
         }
@@ -100,7 +128,7 @@ final class Backup
 
     private static function relative(string $file): ?string
     {
-        $prefix = self::uploadsDir().'/';
+        $prefix = self::uploadsDir() . '/';
 
         return str_starts_with($file, $prefix) ? substr($file, strlen($prefix)) : null;
     }
@@ -112,9 +140,17 @@ final class Backup
 
     private static function sameDimensions(string $a, string $b): bool
     {
-        $sizeA = @getimagesize($a);
-        $sizeB = @getimagesize($b);
+        $sizeA = wp_getimagesize($a);
+        $sizeB = wp_getimagesize($b);
 
         return $sizeA && $sizeB && $sizeA[0] === $sizeB[0] && $sizeA[1] === $sizeB[1];
+    }
+
+    private static function sameOrRotatedDimensions(string $a, string $b): bool
+    {
+        $sizeA = wp_getimagesize($a);
+        $sizeB = wp_getimagesize($b);
+
+        return self::sameDimensions($a, $b) || $sizeA && $sizeB && $sizeA[0] === $sizeB[1] && $sizeA[1] === $sizeB[0];
     }
 }

@@ -14,10 +14,14 @@ use CerealImages\Optimizers\OptipngOptimizer;
  * @phpstan-type Optimization array{status: string, before: int, after: int, time: float}
  * @phpstan-type Sidecar array{format: string, status: string, served: int, result: int, time: float}
  * @phpstan-type FileReport array{file: string, backup: string, optimization: Optimization, sidecars: list<Sidecar>}
+ * @phpstan-type Summary array{before: int, after: array<string, int>, time: array<string, float>}
  */
 final class Processor
 {
     public const FORMATS = ['avif', 'webp'];
+
+    /** Meta légère posée après traitement (version, date, poids). `_wp_attachment_metadata` n'est jamais modifiée. */
+    public const META = '_cereal_images';
 
     /**
      * @param list<Encoder> $encoders
@@ -28,8 +32,12 @@ final class Processor
         private readonly array $optimizers,
     ) {}
 
-    public static function make(int $avifQuality = 50, int $webpQuality = 80, int $avifSpeed = 8, bool $lossy = true): self
-    {
+    public static function make(
+        int $avifQuality = 50,
+        int $webpQuality = 80,
+        int $avifSpeed = 8,
+        bool $lossy = true,
+    ): self {
         $encoders = [
             new GdEncoder('avif', $avifQuality, $avifSpeed),
             new GdEncoder('webp', $webpQuality),
@@ -61,48 +69,116 @@ final class Processor
     /** @return list<FileReport> */
     public function processAttachment(int $attachmentId): array
     {
+        $this->adoptOriginalImage($attachmentId);
         $report = [];
 
         foreach (Attachment::files($attachmentId) as $file) {
             $backup = Backup::ensure($file);
 
             // Sans sauvegarde, on ne modifie pas le fichier, mais les sidecars restent possibles depuis celui-ci.
-            if ($backup === 'error') {
-                $size = (int) filesize($file);
-                $optimization = ['status' => 'no-backup', 'before' => $size, 'after' => $size, 'time' => 0.0];
-                $source = $file;
-            } else {
-                $optimization = $this->optimize($file);
-                $source = (string) Backup::path($file);
-            }
+            $source = $backup === 'error' ? $file : (string) Backup::path($file);
+            $optimization = $backup === 'error' ? $this->untouched($file) : $this->optimize($file);
 
             $report[] = [
                 'file' => $file,
                 'backup' => $backup,
                 'optimization' => $optimization,
-                'sidecars' => array_map(
-                    fn (Encoder $encoder) => ['format' => $encoder->format(), ...$this->convert($source, $file, $optimization['after'], $encoder)],
-                    $this->encoders,
-                ),
+                'sidecars' => array_map(fn (Encoder $encoder) => [
+                    'format' => $encoder->format(),
+                    ...$this->convert($source, $file, $optimization['after'], $encoder),
+                ], $this->encoders),
             ];
         }
 
+        if ($report) {
+            $summary = self::summary($report);
+            update_post_meta($attachmentId, self::META, [
+                'version' => VERSION,
+                'date' => time(),
+                'before' => $summary['before'],
+                'after' => $summary['after'],
+            ]);
+        }
+
         return $report;
+    }
+
+    /**
+     * Poids servi avant le passage, puis après pour chaque format. Un sidecar rejeté compte le JPG/PNG, c'est ce que reçoit le navigateur.
+     *
+     * @param list<FileReport> $report
+     * @return Summary
+     */
+    public static function summary(array $report): array
+    {
+        $summary = ['before' => 0, 'after' => ['jpg/png' => 0], 'time' => ['jpg/png' => 0.0]];
+
+        foreach ($report as $item) {
+            $summary['before'] += $item['optimization']['before'];
+            $summary['after']['jpg/png'] += $item['optimization']['after'];
+            $summary['time']['jpg/png'] += $item['optimization']['time'];
+
+            foreach ($item['sidecars'] as $sidecar) {
+                $format = $sidecar['format'];
+                $summary['after'][$format] =
+                    ($summary['after'][$format] ?? 0)
+                    + ($sidecar['status'] === 'ok' ? $sidecar['result'] : $sidecar['served']);
+                $summary['time'][$format] = ($summary['time'][$format] ?? 0.0) + $sidecar['time'];
+            }
+        }
+
+        return $summary;
+    }
+
+    /**
+     * @param Summary $a
+     * @param Summary $b
+     * @return Summary
+     */
+    public static function mergeSummaries(array $a, array $b): array
+    {
+        $merged = ['before' => $a['before'] + $b['before'], 'after' => $a['after'], 'time' => $a['time']];
+
+        foreach ($b['after'] as $label => $after) {
+            $merged['after'][$label] = ($merged['after'][$label] ?? 0) + $after;
+            $merged['time'][$label] = ($merged['time'][$label] ?? 0.0) + ($b['time'][$label] ?? 0.0);
+        }
+
+        return $merged;
+    }
+
+    /**
+     * L'original non réduit n'est ni optimisé ni converti, mais sa sauvegarde ShortPixel est reprise :
+     * sinon elle resterait seule dans un dossier voué à être supprimé.
+     */
+    private function adoptOriginalImage(int $attachmentId): void
+    {
+        $original = Attachment::originalImage($attachmentId);
+
+        if ($original !== null) {
+            Backup::adoptShortPixelOriginal($original);
+        }
     }
 
     /** @return list<array{file: string, status: string, removed: int}> */
     public function restoreAttachment(int $attachmentId): array
     {
         $report = [];
+        $original = Attachment::originalImage($attachmentId);
+
+        if ($original !== null && is_file((string) Backup::path($original))) {
+            $report[] = [
+                'file' => $original,
+                'status' => Backup::restore($original) ? 'restored' : 'error',
+                'removed' => 0,
+            ];
+        }
 
         foreach (Attachment::files($attachmentId) as $file) {
-            $removed = 0;
-
-            foreach (self::FORMATS as $format) {
-                if (is_file("{$file}.{$format}") && unlink("{$file}.{$format}")) {
-                    $removed++;
-                }
-            }
+            $removed = count(array_filter(
+                self::FORMATS,
+                static fn (string $format) => is_file("{$file}.{$format}") && unlink("{$file}.{$format}"),
+            ));
 
             $backup = Backup::path($file);
             $status = match (true) {
@@ -113,6 +189,8 @@ final class Processor
 
             $report[] = ['file' => $file, 'status' => $status, 'removed' => $removed];
         }
+
+        delete_post_meta($attachmentId, self::META);
 
         return $report;
     }
@@ -142,7 +220,7 @@ final class Processor
         $tmp = (string) preg_replace('/(\.[^.]+)$/', '.cereal-tmp$1', $file);
 
         if (! copy($file, $tmp)) {
-            @unlink($tmp);
+            Files::remove($tmp);
 
             return $result('error');
         }
@@ -155,7 +233,7 @@ final class Processor
         $after = is_file($tmp) ? (int) filesize($tmp) : 0;
 
         if (! $optimized || $after === 0) {
-            @unlink($tmp);
+            Files::remove($tmp);
 
             return $result('error', 0, $time);
         }
@@ -169,6 +247,14 @@ final class Processor
         rename($tmp, $file);
 
         return $result('ok', $after, $time);
+    }
+
+    /** @return Optimization */
+    private function untouched(string $file): array
+    {
+        $size = (int) filesize($file);
+
+        return ['status' => 'no-backup', 'before' => $size, 'after' => $size, 'time' => 0.0];
     }
 
     private function optimizerFor(string $file): ?Optimizer
@@ -200,14 +286,14 @@ final class Processor
         $resultSize = is_file($tmp) ? (int) filesize($tmp) : 0;
 
         if (! $encoded || $resultSize === 0) {
-            @unlink($tmp);
+            Files::remove($tmp);
 
             return ['status' => 'error', 'served' => $servedSize, 'result' => 0, 'time' => $time];
         }
 
         if ($resultSize >= $servedSize) {
             unlink($tmp);
-            @unlink($destination);
+            Files::remove($destination);
 
             return ['status' => 'larger', 'served' => $servedSize, 'result' => $resultSize, 'time' => $time];
         }

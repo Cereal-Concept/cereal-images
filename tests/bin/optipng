@@ -1,0 +1,3 @@
+#!/bin/sh
+# Faux optipng : ne change rien, comme sur un PNG déjà optimal.
+exit 0
