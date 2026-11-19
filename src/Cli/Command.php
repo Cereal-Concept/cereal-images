@@ -8,6 +8,8 @@ use CerealImages\Attachment;
 use CerealImages\Backup;
 use CerealImages\Htaccess;
 use CerealImages\Processor;
+use CerealImages\Sidecars;
+use CerealImages\Uploads;
 use cli\progress\Bar;
 use cli\Shell;
 use RecursiveDirectoryIterator;
@@ -283,16 +285,49 @@ final class Command
         }
 
         sort($files);
-
-        foreach (array_slice($files, 0, 20) as $file) {
-            WP_CLI::log($file);
-        }
-
-        if (count($files) > 20) {
-            WP_CLI::log('…');
-        }
+        $this->logFirst($files);
 
         WP_CLI::log(sprintf('%d fichiers, %s dans %s', count($files), $this->size($size, 1), $root));
+    }
+
+    /**
+     * Liste les sidecars laissés par ShortPixel (photo.avif à côté de photo.jpg), plus servis après la bascule.
+     *
+     * Aperçu par défaut. Un fichier qui appartient à une pièce jointe n'est jamais retenu.
+     *
+     * ## OPTIONS
+     *
+     * [--delete]
+     * : Supprime les fichiers listés.
+     *
+     * ## EXAMPLES
+     *
+     *     wp cereal-images shortpixel-sidecars
+     *     wp cereal-images shortpixel-sidecars --delete
+     *
+     * @subcommand shortpixel-sidecars
+     * @when after_wp_load
+     *
+     * @param list<string> $args
+     * @param array<string, mixed> $assocArgs
+     */
+    public function shortPixelSidecars(array $args, array $assocArgs): void
+    {
+        $files = Sidecars::shortPixel();
+        $size = array_sum(array_map(static fn (string $file) => (int) filesize($file), $files));
+        $prefix = strlen(Uploads::dir()) + 1;
+        $this->logFirst(array_map(static fn (string $file) => substr($file, $prefix), $files));
+
+        $summary = sprintf('%d fichiers, %s', count($files), $this->size($size, 1));
+
+        if (! $this->flag($assocArgs, 'delete')) {
+            WP_CLI::log("{$summary}. Relancer avec --delete pour les supprimer.");
+
+            return;
+        }
+
+        $deleted = count(array_filter($files, Sidecars::deleteShortPixel(...)));
+        WP_CLI::success("{$deleted} fichiers supprimés sur {$summary}.");
     }
 
     /**
@@ -323,6 +358,18 @@ final class Command
         }
 
         WP_CLI::success(($remove ? 'Bloc retiré de ' : 'Bloc écrit dans ') . $path);
+    }
+
+    /** @param list<string> $lines */
+    private function logFirst(array $lines, int $limit = 20): void
+    {
+        foreach (array_slice($lines, 0, $limit) as $line) {
+            WP_CLI::log($line);
+        }
+
+        if (count($lines) > $limit) {
+            WP_CLI::log('…');
+        }
     }
 
     /** @param array<string, mixed> $assocArgs */

@@ -82,6 +82,61 @@ abstract class TestCase extends BaseTestCase
         return $path;
     }
 
+    public const SRGB = [
+        [0.4361, 0.2225, 0.0139],
+        [0.3851, 0.7169, 0.0971],
+        [0.1431, 0.0606, 0.7141],
+    ];
+
+    public const DISPLAY_P3 = [[0.5151, 0.2412, -0.0011], [0.2920, 0.6922, 0.0419], [0.1571, 0.0666, 0.7841]];
+
+    /**
+     * Profil ICC minimal : en-tête, puis les trois balises de primaires.
+     *
+     * @param list<list<float>> $primaries
+     */
+    protected static function iccProfile(array $primaries): string
+    {
+        // Taille, CMM, version, classe « écran », espaces RGB et XYZ, date, signature, puis illuminant D50 en 68.
+        $header = pack('N3', 228, 0, 0x0210_0000) . 'mntrRGB XYZ ' . str_repeat("\0", 12) . 'acsp';
+        $header = str_pad($header, 68, "\0") . pack('N3', 0xF6D6, 0x1_0000, 0xD32D);
+        $header = str_pad($header, 128, "\0");
+        $table = pack('N', 3);
+        $data = '';
+
+        foreach (['rXYZ', 'gXYZ', 'bXYZ'] as $index => $tag) {
+            $table .= $tag . pack('N2', 168 + (20 * $index), 20);
+            $data .= 'XYZ ' . "\0\0\0\0";
+
+            foreach ($primaries[$index] as $value) {
+                $data .= pack('N', (int) round($value * 65_536) & 0xFFFF_FFFF);
+            }
+        }
+
+        return $header . $table . $data;
+    }
+
+    /** Ajoute un profil ICC (segment APP2 pour un JPEG, bloc iCCP pour un PNG) à un fichier existant. */
+    protected static function embedProfile(string $path, string $profile): void
+    {
+        $content = (string) file_get_contents($path);
+
+        if (str_starts_with($content, "\xFF\xD8")) {
+            $segment = "ICC_PROFILE\0\x01\x01" . $profile;
+            file_put_contents(
+                $path,
+                "\xFF\xD8\xFF\xE2" . pack('n', strlen($segment) + 2) . $segment . substr($content, 2),
+            );
+
+            return;
+        }
+
+        $chunk = "P3\0\0" . gzcompress($profile);
+        $iccp = pack('N', strlen($chunk)) . 'iCCP' . $chunk . pack('N', crc32('iCCP' . $chunk));
+        // Après la signature (8 octets) et le bloc IHDR (25 octets).
+        file_put_contents($path, substr($content, 0, 33) . $iccp . substr($content, 33));
+    }
+
     /** @param list<string> $sizes */
     protected function attachment(int $id, string $file, array $sizes = [], ?string $original = null): void
     {

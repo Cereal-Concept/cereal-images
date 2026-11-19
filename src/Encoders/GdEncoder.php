@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace CerealImages\Encoders;
 
+use CerealImages\Files;
 use GdImage;
 
 final class GdEncoder implements Encoder
@@ -64,10 +65,42 @@ final class GdEncoder implements Encoder
             return false;
         }
 
-        return match ($this->format) {
-            'avif' => imageavif($image, $destination, $this->quality, $this->speed),
-            'webp' => imagewebp($image, $destination, $this->quality),
-        };
+        if ($this->format === 'avif') {
+            return imageavif($image, $destination, $this->quality, $this->speed);
+        }
+
+        if (! imagewebp($image, $destination, $this->quality)) {
+            return false;
+        }
+
+        return ! self::isPng($source) || $this->keepLosslessIfSmaller($image, $destination);
+    }
+
+    private static function isPng(string $path): bool
+    {
+        return strtolower(pathinfo($path, PATHINFO_EXTENSION)) === 'png';
+    }
+
+    /** Pictos et illustrations en aplats : le WebP sans perte y est souvent bien plus léger que le PNG et que le WebP avec perte. */
+    private function keepLosslessIfSmaller(GdImage $image, string $destination): bool
+    {
+        $lossless = "{$destination}.lossless.tmp";
+
+        if (! imagewebp($image, $lossless, IMG_WEBP_LOSSLESS)) {
+            Files::remove($lossless);
+
+            return true;
+        }
+
+        clearstatcache();
+
+        if (filesize($lossless) < filesize($destination)) {
+            return rename($lossless, $destination);
+        }
+
+        unlink($lossless);
+
+        return true;
     }
 
     private function load(string $path): GdImage|false

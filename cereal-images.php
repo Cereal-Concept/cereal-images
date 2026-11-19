@@ -3,7 +3,7 @@
 /**
  * Plugin Name: Cereal Images
  * Description: Génère des versions AVIF et WebP des images et les sert via .htaccess.
- * Version: 0.4.0
+ * Version: 0.5.0
  * Requires PHP: 8.1
  * Author: Cereal Concept
  */
@@ -14,7 +14,7 @@ namespace CerealImages;
 
 defined('ABSPATH') || exit();
 
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 
 spl_autoload_register(function (string $class): void {
     if (! str_starts_with($class, __NAMESPACE__ . '\\')) {

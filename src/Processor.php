@@ -83,10 +83,12 @@ final class Processor
                 'file' => $file,
                 'backup' => $backup,
                 'optimization' => $optimization,
-                'sidecars' => array_map(fn (Encoder $encoder) => [
-                    'format' => $encoder->format(),
-                    ...$this->convert($source, $file, $optimization['after'], $encoder),
-                ], $this->encoders),
+                'sidecars' => ColorProfile::isSafeForGd($source)
+                    ? array_map(fn (Encoder $encoder) => [
+                        'format' => $encoder->format(),
+                        ...$this->convert($source, $file, $optimization['after'], $encoder),
+                    ], $this->encoders)
+                    : $this->skipForColorProfile($file, $optimization['after']),
             ];
         }
 
@@ -158,6 +160,24 @@ final class Processor
         if ($original !== null) {
             Backup::adoptShortPixelOriginal($original);
         }
+    }
+
+    /**
+     * Profil couleur non sRGB : l'original est servi, un ancien sidecar (aux couleurs faussées) est supprimé.
+     *
+     * @return list<Sidecar>
+     */
+    private function skipForColorProfile(string $file, int $servedSize): array
+    {
+        Sidecars::remove($file);
+
+        return array_map(fn (Encoder $encoder) => [
+            'format' => $encoder->format(),
+            'status' => 'icc',
+            'served' => $servedSize,
+            'result' => 0,
+            'time' => 0.0,
+        ], $this->encoders);
     }
 
     /** @return list<array{file: string, status: string, removed: int}> */

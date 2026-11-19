@@ -47,7 +47,7 @@ Résultat du script de diagnostic sur la préprod Sopara :
 | PHP | 8.4, Apache derrière `o2switch-PowerBoost-v3` |
 | `memory_limit` / `max_execution_time` | 512M / 600 s |
 | GD WebP / GD AVIF | OK / OK (`imageavif` fonctionnel) |
-| Imagick | absent |
+| Imagick | **présent** : WordPress l'utilise pour les tailles (`WP_Image_Editor_Imagick`, constaté le 2026-11-19 via WP-CLI et à l'upload). Le diagnostic initial le disait absent. Version et support AVIF à vérifier |
 | `exec()` | autorisé |
 | Binaires présents | `jpegoptim`, `optipng`, `convert` (ImageMagick CLI) |
 | Binaires absents | `cwebp`, `avifenc`, `jpegtran`, `pngquant`, `oxipng`, `vips` |
@@ -92,7 +92,7 @@ Pour tester (la préprod est derrière une authentification HTTP) :
 curl -sI -u "$AUTH" -H "Accept: image/avif,image/webp,*/*" "$URL" | grep -iE "^HTTP|content-type|content-length|vary"
 ```
 
-## État du code (v0.4.0)
+## État du code (v0.5.0, non commitée)
 
 ```
 cereal-images.php          en-tête du plugin, autoload, activation/désactivation (bloc .htaccess), enregistrement WP-CLI
@@ -101,18 +101,20 @@ src/Attachment.php         fichiers JPG/PNG d'une pièce jointe (principal + tai
 src/Files.php              Files::remove() (suppression sans erreur si absent)
 src/Uploads.php            dossier et URL des uploads, chemin relatif
 src/Htaccess.php           bloc « Cereal Images » dans uploads/.htaccess (insert_with_markers), install/remove/isInstalled
-src/Sidecars.php           suppression des .avif/.webp d'une image ou de tous les uploads, jamais d'un fichier de pièce jointe
+src/Sidecars.php           suppression des .avif/.webp d'une image ou de tous les uploads, jamais d'un fichier de pièce jointe ; sidecars ShortPixel
+src/ColorProfile.php       profil ICC (APP2 JPEG, iCCP PNG) : sRGB reconnu à ses primaires (rXYZ/gXYZ/bXYZ, tolérance 0,005)
 src/Hooks.php              wp_update_attachment_metadata → événement cron cereal_images_process (+60 s) ; wp_delete_file → purge sidecars + sauvegarde
 src/Backup.php             sauvegarde dans cereal-images-backup/, reprise (déplacement) de la sauvegarde ShortPixel, restauration
 src/Shell.php              exec() + escapeshellarg, détection des binaires via command -v
 src/Processor.php          par fichier : sauvegarde → optimisation → sidecars (encodés depuis la sauvegarde, comparés au fichier servi) ; meta _cereal_images
 src/Encoders/Encoder.php   interface format()/isAvailable()/encode()
-src/Encoders/GdEncoder.php GD : AVIF q50 speed 8, WebP q80, PNG palette → truecolor, alpha conservé ; disponibilité testée par un vrai encodage 1×1
+src/Encoders/GdEncoder.php GD : AVIF q50 speed 8, WebP q80 (PNG : avec et sans perte, le plus léger), PNG palette → truecolor, alpha conservé ; disponibilité testée par un vrai encodage 1×1
 src/Optimizers/            interface Optimizer, JpegoptimOptimizer (-m82, ICC conservé), OptipngOptimizer (-o2)
 src/Cli/Command.php        wp cereal-images htaccess [--remove]
                            wp cereal-images convert [<id>...] [--all] [--skip-existing] [--avif-quality=50] [--webp-quality=80] [--avif-speed=8] [--lossless]
                            wp cereal-images restore <id>...
                            wp cereal-images shortpixel-leftovers
+                           wp cereal-images shortpixel-sidecars [--delete]
 ```
 
 v0.2.0 testée en local (WordPress simulé, faux binaires `jpegoptim`/`optipng`) : sans outil → `unavailable` ; sauvegarde ShortPixel de mêmes dimensions déplacée, de dimensions différentes ignorée (reste dans `shortpixel-leftovers`) ; relance → `existing` + `already` ; `restore` remet l'original et supprime les sidecars, sauvegarde conservée ; `--lossless` retire `--max`. Testée sur O2switch (#1815 migrée ShortPixel : `shortpixel` + `already`, AVIF principal 134,6 Ko ; #2379 récente : `created` + jpegoptim −35 % sur le principal, AVIF −70 % au total ; `restore` OK ; `jpegoptim` 1.4.6 et `optipng` 0.7.7 présents). PNG pas encore testé sur serveur.
@@ -204,10 +206,8 @@ Objectif : le plugin installe et retire lui-même ce qu'il ajoute, et ne laisse 
 
 ### Améliorations notées (après l'étape 4)
 
-- **WebP sans perte pour les PNG** : sur les pictos et illustrations en aplats, AVIF q50 et WebP q80 sont plus lourds que le PNG (Sopara : tous rejetés). Essayer aussi `imagewebp($image, $file, IMG_WEBP_LOSSLESS)` pour les PNG et garder le plus léger.
-- **Nettoyage des sidecars ShortPixel** restés dans `uploads` (`photo.avif`, `photo-768x768.avif`… nommés par remplacement d'extension, plus servis) : commande avec aperçu par défaut, ne supprime que `X.avif`/`X.webp` ayant un `X.jpg`/`X.png` voisin et n'appartenant à aucune pièce jointe.
+- ✓ v0.5.0 (testée sur O2switch le 2026-11-19 : P3 #2382 → tout en `icc` ; PNG #2054 → AVIF −68 %, WebP −60 % ; logos de 1 Ko toujours plus légers en PNG, normal ; `shortpixel-sidecars` : 1 567 fichiers, 109 Mo) : **profils couleur** (sidecars non générés, statut `icc`, ancien sidecar supprimé), **WebP sans perte pour les PNG** (`IMG_WEBP_LOSSLESS`, gardé s'il est plus léger que le WebP avec perte), **`shortpixel-sidecars [--delete]`** (aperçu par défaut, `X.avif`/`X.webp` avec un `X.jpg|jpeg|png` voisin, hors pièces jointes et dossiers de sauvegarde).
 - **Ordre d'affichage WP-CLI sur O2switch** : `Success` sort avant le tableau des totaux (mélange de sorties tamponnées et non tamponnées).
-- Profils ICC non sRGB (voir « Points d'attention »).
 - Page admin (étape 5), avec oxlint/oxfmt pour son JS.
 
 ### 5. Admin minimale
@@ -235,7 +235,7 @@ Pièges rencontrés : originaux tournés par ShortPixel (orientation EXIF, dimen
 
 ## Points d'attention techniques
 
-- **Profils couleur** : GD ignore les profils ICC. Une photo en Display P3 (iPhone) peut ternir en AVIF/WebP. À faire : détecter un profil ICC non sRGB dans le JPEG (segment APP2 `ICC_PROFILE`) et, dans ce cas, ne pas générer de sidecar (l'original est servi).
+- **Profils couleur** : GD ignore les profils ICC. Une photo en Display P3 (iPhone) peut ternir en AVIF/WebP. Fait (v0.5.0) : profil RGB non sRGB → pas de sidecar, l'original est servi. Sur O2switch, WordPress génère les tailles avec Imagick, qui garde le profil : toutes les tailles d'une photo P3 sont donc `icc` (vérifié, #2382). Piste : convertir en sRGB avec Imagick (`transformImageColorspace`/`profileImage`) avant l'encodage, pour leur donner quand même des sidecars. Profils vérifiés : sRGB (Linux, Windows) acceptés ; Adobe RGB, écran Dell P3 refusés. CMYK et gris laissés passer.
 - **Transparence** : `imagealphablending(false)` + `imagesavealpha(true)` avant l'encodage, PNG palette converti en truecolor (déjà fait).
 - **Mémoire et temps** : traiter une pièce jointe par tâche. L'AVIF sur une image de 2560 px prend plusieurs secondes avec GD.
 - **Écritures atomiques** : toujours écrire en `.tmp` puis `rename()`, pour que le `.htaccess` ne serve jamais un fichier partiel.

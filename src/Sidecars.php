@@ -32,10 +32,56 @@ final class Sidecars
     /** Parcourt tous les uploads, hors dossiers de sauvegarde, y compris les sidecars orphelins. */
     public static function removeAll(): int
     {
+        return count(array_filter(
+            iterator_to_array(self::uploadsFiles(), false),
+            static fn (string $file) => preg_match(self::SIDECAR, $file) && self::delete($file),
+        ));
+    }
+
+    /**
+     * Sidecars laissés par ShortPixel, nommés par remplacement d'extension (`photo.avif` à côté de `photo.jpg`) :
+     * plus servis une fois la bascule faite.
+     *
+     * @return list<string>
+     */
+    public static function shortPixel(): array
+    {
+        $found = array_values(array_filter(
+            iterator_to_array(self::uploadsFiles(), false),
+            self::isShortPixelSidecar(...),
+        ));
+        sort($found);
+
+        return $found;
+    }
+
+    public static function deleteShortPixel(string $file): bool
+    {
+        return self::isShortPixelSidecar($file) && self::delete($file);
+    }
+
+    private static function isShortPixelSidecar(string $file): bool
+    {
+        if (! preg_match('/^(.+)\.(avif|webp)$/i', $file, $match) || preg_match(self::IMAGE, $match[1])) {
+            return false;
+        }
+
+        foreach (['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG'] as $extension) {
+            if (is_file("{$match[1]}.{$extension}")) {
+                return ! Attachment::isAttachmentFile($file);
+            }
+        }
+
+        return false;
+    }
+
+    /** @return \Generator<int, string> */
+    private static function uploadsFiles(): \Generator
+    {
         $root = Uploads::dir();
 
         if (! is_dir($root)) {
-            return 0;
+            return;
         }
 
         $directories = new RecursiveCallbackFilterIterator(
@@ -44,17 +90,13 @@ final class Sidecars
             || ! in_array($item->getFilename(), [Backup::DIRECTORY, Backup::SHORTPIXEL_DIRECTORY], true),
         );
 
-        $removed = 0;
-
         foreach (new RecursiveIteratorIterator($directories) as $item) {
-            if (! $item instanceof SplFileInfo || ! preg_match(self::SIDECAR, $item->getFilename())) {
+            if (! $item instanceof SplFileInfo || ! $item->isFile()) {
                 continue;
             }
 
-            $removed += (int) self::delete($item->getPathname());
+            yield $item->getPathname();
         }
-
-        return $removed;
     }
 
     private static function delete(string $sidecar): bool

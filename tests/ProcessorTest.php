@@ -191,6 +191,20 @@ final class ProcessorTest extends TestCase
         self::assertArrayNotHasKey(Processor::META, Wp::$meta[1] ?? []);
     }
 
+    public function testWideGamutImageGetsNoSidecar(): void
+    {
+        $file = $this->jpeg('2026/06/photo.jpg');
+        self::embedProfile($file, self::iccProfile(self::DISPLAY_P3));
+        file_put_contents("{$file}.webp", 'ancien sidecar aux couleurs faussées');
+        $this->attachment(1, $file);
+
+        $report = $this->processor()->processAttachment(1);
+
+        self::assertSame('ok', $report[0]['optimization']['status']);
+        self::assertSame('icc', $report[0]['sidecars'][0]['status']);
+        self::assertFileDoesNotExist("{$file}.webp");
+    }
+
     /** @return list<array{int}> */
     public static function encodedSizes(): array
     {
