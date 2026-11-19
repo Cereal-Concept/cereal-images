@@ -3,7 +3,7 @@
 /**
  * Plugin Name: Cereal Images
  * Description: Génère des versions AVIF et WebP des images et les sert via .htaccess.
- * Version: 0.1.0
+ * Version: 0.2.0
  * Requires PHP: 8.1
  * Author: Cereal Concept
  */
