@@ -198,4 +198,26 @@ function get_option(string $option, mixed $default = false): mixed
     return Wp::$options[$option] ?? $default;
 }
 
+function plugin_basename(string $file): string
+{
+    return basename(dirname($file)) . '/' . basename($file);
+}
+
+function get_site_transient(string $transient): mixed
+{
+    return Wp::$options["_site_transient_{$transient}"] ?? false;
+}
+
+function set_site_transient(string $transient, mixed $value, int $expiration = 0): bool
+{
+    Wp::$options["_site_transient_{$transient}"] = $value;
+
+    return true;
+}
+
+function esc_html(string $text): string
+{
+    return htmlspecialchars($text, ENT_QUOTES);
+}
+
 require dirname(__DIR__) . '/cereal-images.php';

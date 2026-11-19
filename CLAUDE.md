@@ -93,7 +93,7 @@ Pour tester (la préprod est derrière une authentification HTTP) :
 curl -sI -u "$AUTH" -H "Accept: image/avif,image/webp,*/*" "$URL" | grep -iE "^HTTP|content-type|content-length|vary"
 ```
 
-## État du code (v0.7.0)
+## État du code (v0.8.0, non commitée)
 
 ```
 cereal-images.php          en-tête du plugin, autoload, activation/désactivation (bloc .htaccess), enregistrement WP-CLI
@@ -112,6 +112,7 @@ src/Processor.php          par fichier : sauvegarde → optimisation → sidecar
 src/Encoders/Encoder.php   interface format()/isAvailable()/encode()
 src/Encoders/GdEncoder.php GD : AVIF q50 speed 8, WebP q80 (PNG : avec et sans perte, le plus léger), PNG palette → truecolor, alpha conservé ; disponibilité testée par un vrai encodage 1×1
 src/Optimizers/            interface Optimizer, JpegoptimOptimizer (-m82, ICC conservé), OptipngOptimizer (-o2)
+src/Updater.php            mises à jour depuis les releases GitHub (en-tête Update URI → filtre update_plugins_github.com, update.json en cache 12 h)
 src/Settings.php           option cereal_images_settings (qualités, vitesse, sans perte) ; Settings::processor($overrides) pour le cron et le WP-CLI
 src/Stats.php              totaux médiathèque depuis la meta _cereal_images (Attachment::processedMeta, SQL direct non couvert)
 src/Admin/Page.php         Médias > Cereal Images : statistiques, état du serveur, bouton « Réécrire le bloc .htaccess », réglages (Settings API)
@@ -142,6 +143,17 @@ Choix assumés :
 - Nommage par ajout d'extension (`photo.jpg.avif`) : règle `.htaccess` triviale, aucune métadonnée à stocker, pas de collision entre `photo.jpg` et `photo.png`.
 - L'original non réduit (`original_image`, avant `-scaled`) n'est pas converti : rarement affiché, très lent en AVIF. Option possible plus tard.
 - Les fichiers `-rotated`/`-scaled` créés par WordPress sont déjà correctement orientés, donc pas de gestion EXIF.
+
+## Publier une version
+
+Dépôt public `github.com/Cereal-Concept/cereal-images`. Les sites voient la mise à jour dans Extensions (mise à jour automatique activable).
+
+1. Même numéro dans l'en-tête `Version:` et la constante `VERSION` de `cereal-images.php`.
+2. `composer check` et `npm run check`, commit.
+3. `git tag -a v0.8.0 -m "notes de version"` puis `git push --follow-tags`. Le message du tag devient les notes affichées dans l'admin.
+4. L'action `.github/workflows/release.yml` vérifie la version, construit `cereal-images.zip` (`git archive`, fichiers `export-ignore` exclus) et `update.json`, et publie la release.
+
+Les sites lisent `releases/latest/download/update.json`, pas l'API GitHub (limitée à 60 appels/h par IP, partagée sur un mutualisé). Échec → nouvel essai après 1 h. Le zip doit contenir un dossier `cereal-images/` : le dossier du plugin sur les sites doit porter ce nom. Premier passage en 0.8.0 à faire à la main (les versions antérieures n'ont pas l'updater).
 
 ## Feuille de route
 
@@ -231,19 +243,23 @@ Description initiale :
 
 Une page Médias > Cereal Images : formats et outils disponibles sur le serveur, qualités, mode JPG avec ou sans perte, stats (pièces jointes traitées, gain total), lancement et progression du traitement en masse, restauration globale. Colonne de statut dans la médiathèque si c'est utile.
 
-### 6. Migration depuis ShortPixel (validée sur la préprod Sopara le 2026-11-19)
+### 6. Remplacement de ShortPixel sur un site (validé sur la préprod Sopara le 2026-11-19)
 
-Procédure, depuis `uploads` :
+Pas de migration à faire : les sauvegardes ShortPixel sont reprises automatiquement pendant le traitement.
 
-1. `wp cereal-images convert --all --skip-existing` (via `nohup … > ~/cereal-all.log 2>&1 &` ; ~2,3 s par pièce jointe).
-2. `wp cereal-images shortpixel-leftovers` : ce qui reste doit s'expliquer (pièces jointes supprimées, pièces jointes WebP hors périmètre). Diagnostic des restes : chercher la pièce jointe par `_wp_attached_file` (attention : l'original peut être un `.heic`).
-3. Sauvegardes ShortPixel des pièces jointes WebP : déplacées à la main vers `cereal-images-backup/` (`mv -n`, même arborescence).
-4. `shortpixel-leftovers` à 0 → `rm -r ShortpixelBackups`.
+1. Désactiver ShortPixel.
+2. Activer Cereal Images (bloc `.htaccess` écrit à l'activation).
+3. Lancer le traitement : bouton « Traiter les images non traitées » (Médias > Cereal Images) ou `wp cereal-images convert --all` (~2,3 s par pièce jointe ; en SSH, via `nohup … > ~/cereal-all.log 2>&1 &`).
+
+Ménage facultatif, une fois le site vérifié :
+
+- `wp cereal-images shortpixel-sidecars --delete` : anciens AVIF/WebP de ShortPixel (Sopara : 1 567 fichiers, 109 Mo).
+- `wp cereal-images shortpixel-leftovers` : ce qui reste dans `ShortpixelBackups/` (sauvegardes de pièces jointes supprimées ou WebP, hors périmètre). Si rien d'utile → `rm -r ShortpixelBackups`. Pour garder la sauvegarde d'une pièce jointe WebP : `mv -n` vers `cereal-images-backup/`, même arborescence.
 
 Pièges rencontrés : originaux tournés par ShortPixel (orientation EXIF, dimensions inversées, gérés pour l'original non réduit seulement) ; photos HEIC converties par WordPress (type MIME `image/heic`, fichiers `.jpg` : la sélection se fait par extension du fichier affiché) ; pièce jointe WebP nommée `photo.jpg.webp`, identique à notre nommage de sidecar (pas de collision sur Sopara : aucun `photo.jpg` du même nom, mais un risque théorique d'écrasement existe).
 
 
-- Désactiver la livraison WebP/AVIF de ShortPixel et retirer son bloc du `.htaccess` racine (marqueur `ShortPixelWebp` à confirmer) avant d'activer Cereal Images.
+- Bloc WebP de ShortPixel dans le `.htaccess` racine (marqueur `ShortPixelWebp` à confirmer), s'il reste après désactivation : sans effet sur les images, les règles de réécriture du `.htaccess` d'`uploads` remplaçant celles du dossier parent (pas de `RewriteOptions Inherit`). À retirer pour la propreté.
 - `uploads/ShortpixelBackups/` contient les originaux d'avant ShortPixel, **toutes tailles comprises**. Arborescence = chemin d'URL des uploads sous `ShortpixelBackups/` : sur Bedrock `ShortpixelBackups/app/uploads/2026/06/photo.jpg` (à calculer depuis le chemin de `wp_upload_dir()['baseurl']`). Sopara : 1,1 Go.
 - ShortPixel compresse fort (Sopara #1815 : principal 1 655 Ko → 174,5 Ko, tailles −65 %). Ne pas réoptimiser ces JPG (double perte, et `jpegoptim -m82` depuis l'original ne ferait pas mieux).
 - Mesuré sur #1815 (AVIF q50 speed 8) : l'AVIF tiré de la sauvegarde ShortPixel ne pèse que 2 à 8 % de plus que celui tiré du JPEG ShortPixel, et reste bien sous le JPEG servi (principal 137,8 Ko contre 178,7 Ko). Donc : sauvegarde ShortPixel = sauvegarde de référence et source des sidecars, sans repasser par une compression avec perte.

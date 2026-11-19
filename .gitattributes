@@ -9,3 +9,5 @@
 /package.json       export-ignore
 /package-lock.json  export-ignore
 /.oxlintrc.json     export-ignore
+/.github          export-ignore
+/composer.lock     export-ignore

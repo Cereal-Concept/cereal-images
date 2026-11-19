@@ -1,0 +1,37 @@
+# Sur un tag vX.Y.Z : vérifie que l'en-tête du plugin porte la même version, construit le zip
+# (git archive, donc sans les fichiers export-ignore) et publie la release avec update.json,
+# lu par les sites pour proposer la mise à jour dans l'admin.
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Vérifier la version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          grep -q "^ \* Version: ${VERSION}$" cereal-images.php || { echo "En-tête : Version différente de ${VERSION}"; exit 1; }
+          grep -q "^const VERSION = '${VERSION}';$" cereal-images.php || { echo "Constante VERSION différente de ${VERSION}"; exit 1; }
+
+      - name: Construire le zip et update.json
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          git archive --prefix=cereal-images/ -o cereal-images.zip "$GITHUB_REF_NAME"
+          NOTES="$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")"
+          jq -n --arg version "$VERSION" --arg notes "$NOTES" '{version: $version, notes: $notes}' > update.json
+
+      - name: Publier la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" cereal-images.zip update.json --title "$GITHUB_REF_NAME" --notes-from-tag
