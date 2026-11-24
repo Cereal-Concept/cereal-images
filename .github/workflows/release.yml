@@ -27,6 +27,8 @@ jobs:
       - name: Construire le zip et update.json
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          # actions/checkout remplace le tag annoté par un tag léger : sans ce fetch, %(contents) donne le message du commit.
+          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
           git archive --prefix=cereal-images/ -o cereal-images.zip "$GITHUB_REF_NAME"
           NOTES="$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")"
           jq -n --arg version "$VERSION" --arg notes "$NOTES" '{version: $version, notes: $notes}' > update.json
