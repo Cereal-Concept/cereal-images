@@ -78,8 +78,23 @@ final class ProcessorTest extends TestCase
 
         $report = (new Processor([new GdEncoder('webp', 80)], []))->processAttachment(1);
 
+        self::assertSame('skipped', $report[0]['backup']);
         self::assertSame('unavailable', $report[0]['optimization']['status']);
+        self::assertSame('ok', $report[0]['sidecars'][0]['status']);
         self::assertSame($before, md5_file($file));
+        self::assertDirectoryDoesNotExist($this->uploads . '/cereal-images-backup');
+    }
+
+    public function testWithoutOptimizerShortPixelBackupIsStillAdopted(): void
+    {
+        $file = $this->jpeg('2026/06/photo.jpg', quality: 50);
+        $this->jpeg('ShortpixelBackups/app/uploads/2026/06/photo.jpg', quality: 95);
+        $this->attachment(1, $file);
+
+        $report = (new Processor([new GdEncoder('webp', 80)], []))->processAttachment(1);
+
+        self::assertSame('shortpixel', $report[0]['backup']);
+        self::assertFileExists($this->uploads . '/cereal-images-backup/2026/06/photo.jpg');
     }
 
     public function testHeavierOptimizationIsDiscarded(): void

@@ -6,6 +6,7 @@ namespace CerealImages\Tests;
 
 use CerealImages\Admin\Rest;
 use CerealImages\Encoders\GdEncoder;
+use CerealImages\Optimizers\JpegoptimOptimizer;
 use CerealImages\Processor;
 use CerealImages\Tests\Doubles\FixedSizeEncoder;
 
@@ -16,7 +17,7 @@ final class RestTest extends TestCase
         $file = $this->jpeg('2026/06/photo.jpg');
         $this->attachment(1, $file);
 
-        $ok = Rest::processAttachment(new Processor([new GdEncoder('webp', 80)], []), 1);
+        $ok = Rest::processAttachment(new Processor([new GdEncoder('webp', 80)], [new JpegoptimOptimizer(true)]), 1);
         $failed = Rest::processAttachment(new Processor([new FixedSizeEncoder('avif', 10, succeeds: false)], []), 1);
 
         self::assertSame(['id' => 1, 'files' => 1, 'errors' => []], $ok);
@@ -29,7 +30,7 @@ final class RestTest extends TestCase
     {
         $file = $this->jpeg('2026/06/photo.jpg');
         $this->attachment(1, $file);
-        $processor = new Processor([new GdEncoder('webp', 80)], []);
+        $processor = new Processor([new GdEncoder('webp', 80)], [new JpegoptimOptimizer(true)]);
         $processor->processAttachment(1);
 
         self::assertSame(['id' => 1, 'files' => 1, 'errors' => []], Rest::restoreAttachment($processor, 1));

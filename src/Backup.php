@@ -35,10 +35,12 @@ final class Backup
 
     /**
      * Une sauvegarde existante n'est jamais écrasée : c'est elle qui fait foi.
+     * Sans `$copy`, seule la sauvegarde ShortPixel est reprise (déplacement, sans coût disque) : inutile de copier
+     * un fichier qui ne sera pas modifié.
      *
-     * @return 'existing'|'shortpixel'|'created'|'error'
+     * @return 'existing'|'shortpixel'|'created'|'skipped'|'error'
      */
-    public static function ensure(string $file): string
+    public static function ensure(string $file, bool $copy = true): string
     {
         $backup = self::path($file);
 
@@ -50,15 +52,15 @@ final class Backup
             return 'existing';
         }
 
-        if (! wp_mkdir_p(dirname($backup))) {
-            return 'error';
-        }
-
         if (self::adoptShortPixel($file)) {
             return 'shortpixel';
         }
 
-        return self::copy($file, $backup) ? 'created' : 'error';
+        if (! $copy) {
+            return 'skipped';
+        }
+
+        return wp_mkdir_p(dirname($backup)) && self::copy($file, $backup) ? 'created' : 'error';
     }
 
     /**

@@ -73,11 +73,17 @@ final class Processor
         $report = [];
 
         foreach (Attachment::files($attachmentId) as $file) {
-            $backup = Backup::ensure($file);
+            $optimizer = $this->optimizerFor($file);
+            $backup = Backup::ensure($file, copy: $optimizer !== null);
 
             // Sans sauvegarde, on ne modifie pas le fichier, mais les sidecars restent possibles depuis celui-ci.
-            $source = $backup === 'error' ? $file : (string) Backup::path($file);
-            $optimization = $backup === 'error' ? $this->untouched($file) : $this->optimize($file);
+            $hasBackup = ! in_array($backup, ['error', 'skipped'], true);
+            $source = $hasBackup ? (string) Backup::path($file) : $file;
+            $optimization = match ($backup) {
+                'error' => $this->untouched($file, 'no-backup'),
+                'skipped' => $this->untouched($file, 'unavailable'),
+                default => $this->optimize($file, $optimizer),
+            };
 
             $report[] = [
                 'file' => $file,
@@ -267,7 +273,7 @@ final class Processor
     }
 
     /** @return Optimization */
-    private function optimize(string $file): array
+    private function optimize(string $file, ?Optimizer $optimizer): array
     {
         $before = (int) filesize($file);
         $result = fn (string $status, int $after = 0, float $time = 0.0) => [
@@ -280,8 +286,6 @@ final class Processor
         if (! Backup::isPristine($file)) {
             return $result('already');
         }
-
-        $optimizer = $this->optimizerFor($file);
 
         if (! $optimizer) {
             return $result('unavailable');
@@ -321,11 +325,11 @@ final class Processor
     }
 
     /** @return Optimization */
-    private function untouched(string $file): array
+    private function untouched(string $file, string $status): array
     {
         $size = (int) filesize($file);
 
-        return ['status' => 'no-backup', 'before' => $size, 'after' => $size, 'time' => 0.0];
+        return ['status' => $status, 'before' => $size, 'after' => $size, 'time' => 0.0];
     }
 
     private function optimizerFor(string $file): ?Optimizer

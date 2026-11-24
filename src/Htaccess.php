@@ -28,7 +28,9 @@ final class Htaccess
         '</IfModule>',
         '',
         // Retiré par PowerBoost sur O2switch, gardé pour les autres hébergements.
-        'Header merge Vary Accept',
+        '<IfModule mod_headers.c>',
+        '    Header merge Vary Accept',
+        '</IfModule>',
     ];
 
     public static function path(): string
@@ -45,6 +47,15 @@ final class Htaccess
     {
         // Sans fichier, rien à retirer : insert_with_markers en créerait un avec un bloc vide.
         return ! is_file(self::path()) || self::write([]);
+    }
+
+    /** Un bloc d'une version précédente est réécrit ; un bloc retiré (`htaccess --remove`) n'est pas remis. */
+    public static function refresh(): bool
+    {
+        self::loadWordPressFunctions();
+        $current = extract_from_markers(self::path(), self::MARKER);
+
+        return $current === [] || $current === self::RULES || self::install();
     }
 
     public static function isInstalled(): bool

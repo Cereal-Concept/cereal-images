@@ -8,6 +8,9 @@ final class Hooks
 {
     public const EVENT = 'cereal_images_process';
 
+    /** Dernière version chargée : une mise à jour ne rejoue pas le hook d'activation. */
+    public const VERSION_OPTION = 'cereal_images_version';
+
     /** WordPress met à jour les métadonnées après chaque taille générée : on laisse finir avant de traiter. */
     private const DELAY = 60;
 
@@ -18,6 +21,19 @@ final class Hooks
         add_action(self::EVENT, [self::class, 'process']);
         // En dernier : une extension qui annule la suppression a déjà vidé le chemin.
         add_filter('wp_delete_file', [self::class, 'purge'], PHP_INT_MAX);
+        add_action('init', [self::class, 'upgrade']);
+    }
+
+    /** Après une mise à jour, le bloc .htaccess reprend les règles de la nouvelle version. */
+    public static function upgrade(): void
+    {
+        if (get_option(self::VERSION_OPTION) === VERSION) {
+            return;
+        }
+
+        // Option posée même en cas d'échec d'écriture : pas de nouvel essai à chaque requête, la page admin le signale.
+        Htaccess::refresh();
+        update_option(self::VERSION_OPTION, VERSION);
     }
 
     public static function activate(): void

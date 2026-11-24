@@ -79,4 +79,35 @@ final class HtaccessTest extends TestCase
         Hooks::deactivate();
         self::assertFalse(Htaccess::isInstalled());
     }
+
+    public function testUpgradeRewritesBlockFromPreviousVersion(): void
+    {
+        insert_with_markers(Htaccess::path(), 'Cereal Images', ['RewriteEngine On', 'Header merge Vary Accept']);
+
+        Hooks::upgrade();
+
+        self::assertTrue(Htaccess::isInstalled());
+        self::assertSame(\CerealImages\VERSION, Wp::$options[Hooks::VERSION_OPTION] ?? null);
+    }
+
+    public function testUpgradeKeepsRemovedBlockRemoved(): void
+    {
+        file_put_contents(Htaccess::path(), "Options -Indexes\n");
+        Htaccess::install();
+        Htaccess::remove();
+
+        Hooks::upgrade();
+
+        self::assertFalse(Htaccess::isInstalled());
+    }
+
+    public function testUpgradeRunsOncePerVersion(): void
+    {
+        Wp::$options[Hooks::VERSION_OPTION] = \CerealImages\VERSION;
+        insert_with_markers(Htaccess::path(), 'Cereal Images', ['RewriteEngine On']);
+
+        Hooks::upgrade();
+
+        self::assertFalse(Htaccess::isInstalled());
+    }
 }

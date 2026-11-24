@@ -10,7 +10,7 @@ Plugin WordPress maison pour remplacer ShortPixel sur les sites clients de Cerea
 - Ne jamais toucher aux URL, au contenu ni aux métadonnées des pièces jointes. Désactiver le plugin doit ramener le site à l'état d'origine sans rien casser.
 - Pas de service cloud, pas de quota : tout se fait sur le serveur.
 
-Hors périmètre pour l'instant : OVH, Nginx, CDN, réécriture HTML en `<picture>`, conversion des images hors médiathèque (thème, CSS).
+Hébergements ciblés : O2switch et OVH mutualisé (Apache). Hors périmètre pour l'instant : Nginx, CDN, réécriture HTML en `<picture>`, conversion des images hors médiathèque (thème, CSS).
 
 ## Conventions de code
 
@@ -53,7 +53,7 @@ Résultat du script de diagnostic sur la préprod Sopara :
 | Binaires présents | `jpegoptim`, `optipng`, `convert` (ImageMagick CLI) |
 | Binaires absents | `cwebp`, `avifenc`, `jpegtran`, `pngquant`, `oxipng`, `vips` |
 
-Pour mémoire, OVH mutualisé (non ciblé pour l'instant) : PHP 8.3, GD sans AVIF, Imagick 6.9.10 sans AVIF, `cwebp` présent, aucun binaire d'optimisation JPG/PNG, `max_execution_time` 165 s. L'AVIF y demanderait un binaire `avifenc` statique embarqué (exécution à vérifier).
+OVH mutualisé (ciblé depuis v0.9.0, premier déploiement le 2026-11-24, non encore vérifié) : PHP 8.3, GD sans AVIF, Imagick 6.9.10 sans AVIF, `cwebp` présent, aucun binaire d'optimisation JPG/PNG, `max_execution_time` 165 s. Donc WebP seul, JPG/PNG intacts et **pas de copie de sauvegarde** (statut `skipped`, seule la sauvegarde ShortPixel est reprise par déplacement). L'AVIF y demanderait un binaire `avifenc` statique embarqué (exécution à vérifier).
 
 ## Ce qui est validé sur le serveur
 
@@ -93,7 +93,9 @@ Pour tester (la préprod est derrière une authentification HTTP) :
 curl -sI -u "$AUTH" -H "Accept: image/avif,image/webp,*/*" "$URL" | grep -iE "^HTTP|content-type|content-length|vary"
 ```
 
-## État du code (v0.8.0, non commitée)
+## État du code (v0.9.0)
+
+v0.9.0 : sauvegarde copiée seulement si un optimiseur gère l'extension (sinon `skipped`, le fichier n'étant jamais modifié) ; `Header` dans `<IfModule mod_headers.c>` ; bloc `.htaccess` réécrit sur `init` quand `VERSION` diffère de l'option `cereal_images_version` (une mise à jour ne rejoue pas l'activation ; bloc vidé par `--remove` laissé vide).
 
 ```
 cereal-images.php          en-tête du plugin, autoload, activation/désactivation (bloc .htaccess), enregistrement WP-CLI
@@ -150,7 +152,7 @@ Dépôt public `github.com/Cereal-Concept/cereal-images`. Les sites voient la mi
 
 1. Même numéro dans l'en-tête `Version:` et la constante `VERSION` de `cereal-images.php`.
 2. `composer check` et `npm run check`, commit.
-3. `git tag -a v0.8.0 -m "notes de version"` puis `git push --follow-tags`. Le message du tag devient les notes affichées dans l'admin.
+3. `git tag -a vX.Y.Z -m "notes de version"` puis `git push --follow-tags`. Le message du tag devient les notes affichées dans l'admin.
 4. L'action `.github/workflows/release.yml` vérifie la version, construit `cereal-images.zip` (`git archive`, fichiers `export-ignore` exclus) et `update.json`, et publie la release.
 
 Les sites lisent `releases/latest/download/update.json`, pas l'API GitHub (limitée à 60 appels/h par IP, partagée sur un mutualisé). Échec → nouvel essai après 1 h. Le zip doit contenir un dossier `cereal-images/` : le dossier du plugin sur les sites doit porter ce nom. Premier passage en 0.8.0 à faire à la main (les versions antérieures n'ont pas l'updater).

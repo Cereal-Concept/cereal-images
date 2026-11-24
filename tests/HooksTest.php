@@ -6,6 +6,7 @@ namespace CerealImages\Tests;
 
 use CerealImages\Encoders\GdEncoder;
 use CerealImages\Hooks;
+use CerealImages\Optimizers\JpegoptimOptimizer;
 use CerealImages\Processor;
 
 final class HooksTest extends TestCase
@@ -44,7 +45,7 @@ final class HooksTest extends TestCase
         $other = $this->jpeg('2026/06/autre.jpg');
         $this->attachment(1, $file);
         $this->attachment(2, $other);
-        $processor = new Processor([new GdEncoder('webp', 80)], []);
+        $processor = new Processor([new GdEncoder('webp', 80)], [new JpegoptimOptimizer(true)]);
         $processor->processAttachment(1);
         $processor->processAttachment(2);
 
@@ -61,7 +62,7 @@ final class HooksTest extends TestCase
     {
         $file = $this->jpeg('2026/06/photo.jpg');
         $this->attachment(1, $file);
-        (new Processor([new GdEncoder('webp', 80)], []))->processAttachment(1);
+        (new Processor([new GdEncoder('webp', 80)], [new JpegoptimOptimizer(true)]))->processAttachment(1);
 
         self::assertSame('', Hooks::purge(''));
 

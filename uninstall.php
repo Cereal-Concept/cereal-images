@@ -13,3 +13,4 @@ require_once __DIR__ . '/cereal-images.php';
 Htaccess::remove();
 Sidecars::removeAll();
 delete_post_meta_by_key(Processor::META);
+delete_option(Hooks::VERSION_OPTION);

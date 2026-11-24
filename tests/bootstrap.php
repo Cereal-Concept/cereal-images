@@ -198,6 +198,20 @@ function get_option(string $option, mixed $default = false): mixed
     return Wp::$options[$option] ?? $default;
 }
 
+function update_option(string $option, mixed $value, ?bool $autoload = null): bool
+{
+    Wp::$options[$option] = $value;
+
+    return true;
+}
+
+function delete_option(string $option): bool
+{
+    unset(Wp::$options[$option]);
+
+    return true;
+}
+
 function plugin_basename(string $file): string
 {
     return basename(dirname($file)) . '/' . basename($file);
