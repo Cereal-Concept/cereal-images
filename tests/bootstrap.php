@@ -222,6 +222,13 @@ function get_site_transient(string $transient): mixed
     return Wp::$options["_site_transient_{$transient}"] ?? false;
 }
 
+function delete_site_transient(string $transient): bool
+{
+    unset(Wp::$options["_site_transient_{$transient}"]);
+
+    return true;
+}
+
 function set_site_transient(string $transient, mixed $value, int $expiration = 0): bool
 {
     Wp::$options["_site_transient_{$transient}"] = $value;

@@ -93,7 +93,9 @@ Pour tester (la préprod est derrière une authentification HTTP) :
 curl -sI -u "$AUTH" -H "Accept: image/avif,image/webp,*/*" "$URL" | grep -iE "^HTTP|content-type|content-length|vary"
 ```
 
-## État du code (v0.9.0)
+## État du code (v0.9.1)
+
+v0.9.1 : cache `update.json` ramené à 1 h et vidé avec `update_plugins` (« Vérifier à nouveau », `wp plugin update`) : en 0.8/0.9.0, le cache de 12 h masquait une nouvelle release.
 
 v0.9.0 : sauvegarde copiée seulement si un optimiseur gère l'extension (sinon `skipped`, le fichier n'étant jamais modifié) ; `Header` dans `<IfModule mod_headers.c>` ; bloc `.htaccess` réécrit sur `init` quand `VERSION` diffère de l'option `cereal_images_version` (une mise à jour ne rejoue pas l'activation ; bloc vidé par `--remove` laissé vide).
 
@@ -155,7 +157,7 @@ Dépôt public `github.com/Cereal-Concept/cereal-images`. Les sites voient la mi
 3. `git tag -a vX.Y.Z -m "notes de version"` puis `git push --follow-tags`. Le message du tag devient les notes affichées dans l'admin.
 4. L'action `.github/workflows/release.yml` vérifie la version, construit `cereal-images.zip` (`git archive`, fichiers `export-ignore` exclus) et `update.json`, et publie la release.
 
-Les sites lisent `releases/latest/download/update.json`, pas l'API GitHub (limitée à 60 appels/h par IP, partagée sur un mutualisé). Échec → nouvel essai après 1 h. Le zip doit contenir un dossier `cereal-images/` : le dossier du plugin sur les sites doit porter ce nom. Premier passage en 0.8.0 à faire à la main (les versions antérieures n'ont pas l'updater).
+Les sites lisent `releases/latest/download/update.json`, pas l'API GitHub (limitée à 60 appels/h par IP, partagée sur un mutualisé). Cache 1 h (succès comme échec), vidé en même temps que le transient `update_plugins` de WordPress. Le zip doit contenir un dossier `cereal-images/` : le dossier du plugin sur les sites doit porter ce nom. Premier passage en 0.8.0 à faire à la main (les versions antérieures n'ont pas l'updater).
 
 ## Feuille de route
 

@@ -63,4 +63,14 @@ final class UpdaterTest extends TestCase
         self::assertStringContainsString('&lt;script&gt;', $details->sections['changelog']);
         self::assertFalse(Updater::details(false, 'plugin_information', (object) ['slug' => 'autre']));
     }
+
+    public function testWordPressCacheClearAlsoClearsOurs(): void
+    {
+        Wp::$options['_site_transient_cereal_images_release'] = ['version' => '0.8.0'];
+
+        self::assertSame([Updater::class, 'clearCache'], Wp::$hooks['delete_site_transient_update_plugins'] ?? null);
+        Updater::clearCache();
+
+        self::assertArrayNotHasKey('_site_transient_cereal_images_release', Wp::$options);
+    }
 }

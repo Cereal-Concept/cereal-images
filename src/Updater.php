@@ -20,7 +20,8 @@ final class Updater
 
     private const CACHE = 'cereal_images_release';
 
-    private const CACHE_TTL = 12 * 3600;
+    /** Court : WordPress espace déjà ses propres vérifications (12 h par le cron, 1 h sur la page Extensions). */
+    private const CACHE_TTL = 3600;
 
     /** Après un échec (GitHub injoignable, pas encore de release) : nouvel essai plus tôt. */
     private const ERROR_TTL = 3600;
@@ -33,6 +34,13 @@ final class Updater
         // Appelé grâce à l'en-tête « Update URI » ; WordPress.org n'est alors plus consulté pour ce plugin.
         add_filter('update_plugins_github.com', [self::class, 'update'], 10, 3);
         add_filter('plugins_api', [self::class, 'details'], 10, 3);
+        // « Vérifier à nouveau », `wp plugin update`… vident le cache de WordPress : le nôtre suit, sinon il masquerait la release.
+        add_action('delete_site_transient_update_plugins', [self::class, 'clearCache']);
+    }
+
+    public static function clearCache(): void
+    {
+        delete_site_transient(self::CACHE);
     }
 
     /**
